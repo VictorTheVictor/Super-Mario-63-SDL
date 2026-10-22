@@ -1,0 +1,17 @@
+native_smoke 42 0.333301
+player_collision 41 0.00377786
+level_importer 38 0.0371804
+enemy_interactions 30 0.00585166
+item_interactions 25 0.00554279
+audio_playback 23 0.466284
+area_transitions 20 0.00752616
+moving_platforms 18 0.00151877
+course_exploration 17 1.36191
+fludd_mechanics 15 0.00503807
+sign_interactions 11 0.00124647
+native_sign_smoke 10 0.622889
+collectible_sequences 7 0.035058
+course_objects 5 0.00897993
+opening_stage 3 1.6753
+opening_second_area 3 1.52721
+---

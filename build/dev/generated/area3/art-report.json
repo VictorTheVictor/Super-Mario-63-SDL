@@ -1,0 +1,32 @@
+{
+  "omitted": [
+    "   Enemies/Bosses/King Bomb-omb/King Bomb-omb Code",
+    "   Enemies/Normal/ A-F/ Bob-Omb/Bomb omb Code",
+    "   Enemies/Normal/ G-Z/ Goomba/Goomba",
+    "   Enemies/Normal/ G-Z/ Koopa/Koopa Code",
+    "   Enemies/Normal/ G-Z/ Shy-Guy/Shy Guy Code",
+    "  Course Clips/ 1 - Bob-omb Battlefield/ Area 1-4/1- Bowling Ball 3",
+    "  Course Clips/ 1 - Bob-omb Battlefield/ Area 1-4/1-Bowling Ball Animation 2",
+    "  Course Clips/ 1 - Bob-omb Battlefield/ Area 1-4/Bowling Ball Animation",
+    "  Course Items-PL/ Decoration/ Signs & Fences/ Coded Sign/Coded Sign",
+    "  Course Items-PL/ In-course Items/ Collectables/ Coin: Blue Folder/Blue Coin Code",
+    "  Course Items-PL/ In-course Items/ Collectables/ Coin: Red Folder/Red Coin Code",
+    "  Course Items-PL/ In-course Items/ Collectables/ Coin: Star Folder/Star Coin Code",
+    "  Course Items-PL/ In-course Items/ Collectables/ Coin: Yellow Folder/Gold Coin Code",
+    "  Course Items-PL/ In-course Items/ Collectables/ Starry Stuff/Shine Sprite Clip",
+    "  Course Items-PL/ In-course Items/ Collectables/ Water Bottle/Small Water Bottle Clip",
+    "  Course Items-PL/ In-course Items/ Other/ Breakable Box/Breakable Orange Box",
+    "  Course Items-PL/ In-course Items/ Other/Camera Control Box",
+    "  Course Items-PL/ Various Platforms/ Coded Wooden PL/Tipping Log",
+    "Heart Clip1",
+    "Vector strokes (fill geometry retained)"
+  ],
+  "canvas_origin": [
+    -198,
+    -2033
+  ],
+  "canvas_size": [
+    2600,
+    2174
+  ]
+}

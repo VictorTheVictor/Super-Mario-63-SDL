@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/course_object_tests.dir/link.d CMakeFiles/course_object_tests.dir/native/tests/course_object_tests.cpp.o -o course_object_tests  libsm63_physics.a
