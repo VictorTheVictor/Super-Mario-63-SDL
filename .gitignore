@@ -1,0 +1,6 @@
+build/
+*.swf
+*.bmp
+*.sol.txt
+/hires/
+__pycache__/

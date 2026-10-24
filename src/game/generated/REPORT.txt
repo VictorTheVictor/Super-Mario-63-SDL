@@ -1,0 +1,47 @@
+as2cpp report
+=============
+
+frame scripts: 2604, instance scripts: 5718 (6247 handlers), button scripts: 6
+files: 329, lines: 147377
+
+Translation errors (0):
+
+Unsupported constructs (0):
+
+Mapping problems (6):
+  1 scripts but 2 DoActions   [  Course Clips/ C - Castle/Castle Inside/ Section C & D/C-13 BG / layer 'Layer 1' / frame 160]
+  placement has no clip actions   [Preloader (after) Disclaimers / layer 'Layer 3' / frame 158 / Website Link Button]
+  conflicting pairing with sprite 3590   [Cinema End Course Viewer]
+  conflicting pairing with sprite 4682   [  Course Clips/ 5 - Lethal Lava Land/ Sides (2,3)/5-2 Wheels Pole Tint]
+  no matching placement   [  Course Clips/ 5 - Lethal Lava Land/ Sides (2,3)/5-2 Spinning Ground GFX / layer 'Base' / frame 1 /   Course Clips/ 5 - Lethal Lava Land/ Sides (2,3)/5-2 Wheel Tint]
+  no matching placement   [  Course Clips/ M - Mini Courses /M3 Close BG Tint / layer 'Layer 1' / frame 2 /   Course Items-PL/ Various Platforms/ Themed PL/ Clock Themed/Pendulum Code]
+
+Low bytecode verification (26; often constant-folded strings):
+  0.67 frame (4342, 0)   [  Course Clips/ 4 - Boo's Mansion/  Mains (4-1, 4-2, 4-8, & 4-10)/4-1 Back GFX / layer 'Layer 4' / frame 2]
+  0.75 frame (4890, 0)   [  Course Clips/ 5 - Lethal Lava Land/5-9BackGFX / layer 'Layer 3' / frame 3]
+  0.83 frame (5082, 0)   [  Course Clips/ 6 - Tall Tall Mountian/6-5 Back GFX / layer 'Layer 3' / frame 3]
+  0.75 frame (5305, 0)   [  Course Clips/ 8 - Bowser's Castle/Beginning/8-1 Back GFX / layer 'Layer 8' / frame 3]
+  0.67 frame (6365, 0)   [  Course Clips/ 8 - Storyline Stars/ 8 - Bowser's Trap/  Trap Un/8-E2-1 Back GFX / layer 'Layer 8' / frame 3]
+  0.50 clip (6254, 36)   [  Course Clips/ 8 - Storyline Stars/ 8 - Tutorials/ FiRsT Tutoria/8-E1-1 Back GFX / layer 'Coins' / frame 1 /   Course Items-PL/ Decoration/ Signs & Fences/ Coded Sign/Coded Sign]
+  0.75 frame (6469, 0)   [  Course Clips/ 9 - Secret Stars/ 9-01 Secret of the Mushroom/9-01 Back GFX / layer 'Layer 2' / frame 2]
+  0.75 frame (6492, 0)   [  Course Clips/ 9 - Secret Stars/ 9-02 Tropical Beach/9-02 BackGFX / layer 'Layer 4' / frame 2]
+  0.75 frame (6554, 0)   [  Course Clips/ 9 - Secret Stars/ 9-04 Frosty Land/9-04 Back GFX / layer 'Layer 3' / frame 3]
+  0.88 frame (6569, 1)   [  Course Clips/ 9 - Secret Stars/ 9-05 Blast to the Stratosphere/9-05 Back GFX / layer 'Layer 5' / frame 3]
+  0.75 frame (6595, 0)   [  Course Clips/ 9 - Secret Stars/ 9-06 Thwomp's Castle/9-06 Back Graphics / layer 'Layer 5' / frame 1]
+  0.86 frame (6750, 0)   [  Course Clips/ 9 - Secret Stars/ 9-08 Kamek (Lava Battle)/9-08 Back GFX / layer 'Layer 5' / frame 1]
+  0.75 frame (6829, 0)   [  Course Clips/ 9 - Secret Stars/9-11 BackGFX / layer 'Layer 2' / frame 3]
+  0.67 frame (2949, 0)   [  Course Clips/ C - Castle/ Outside Castle/C-O Back GFX / layer 'Layer 2' / frame 1]
+  0.67 frame (2935, 0)   [  Course Clips/ C - Castle/Castle Inside/ Section B/C-6 Back GFX / layer 'Layer 2' / frame 1]
+  0.67 frame (6995, 0)   [  Course Clips/ M - Mini Courses / M1 - Sinking Sand Land/M1-1 Back GFX / layer 'Layer 5' / frame 3]
+  0.67 frame (7045, 0)   [  Course Clips/ M - Mini Courses / M2 - Wet Dry World/M2-1 Back GFX / layer 'Coins&Enemies' / frame 1]
+  0.67 frame (4094, 0)   [  Course Clips/2-5BackGFX / layer 'Layer 2' / frame 3]
+  0.83 frame (5232, 0)   [  Course Clips/7-6BackGFX / layer 'Layer 3' / frame 3]
+  0.50 clip (6338, 0)   [  Course Clips/8-E3-2BackGFX / layer 'Layer 1' / frame 1 /   Course Items-PL/ Decoration/ Signs & Fences/ Coded Sign/Coded Sign]
+  0.67 frame (1682, 22)   [      Char/Mario Exit Painting / layer 'Code' / frame 154]
+  0.89 frame (10399, 6)   [Kamek Battle 2 Cinema / layer 'Layer 4' / frame 102]
+  0.61 frame (8936, 4)   [Level Designer Windows/Window (Large) / layer 'Frame' / frame 5]
+  0.73 frame (8936, 5)   [Level Designer Windows/Window (Large) / layer 'Frame' / frame 8]
+  0.67 frame (2047, 22)   [Luigi Exit Painting / layer 'Code' / frame 154]
+  0.78 frame (737, 0)   [Pause New SM / layer 'Layer 2' / frame 1]
+
+Scripts in library symbols that are not in the SWF: 213
