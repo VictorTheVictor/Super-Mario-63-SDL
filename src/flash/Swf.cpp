@@ -231,6 +231,10 @@ bool Movie::load(const std::string& path, std::string& error) {
     size_t n;
     while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) file.insert(file.end(), buf, buf + n);
     std::fclose(f);
+    return loadFromMemory(std::move(file), error);
+}
+
+bool Movie::loadFromMemory(std::vector<uint8_t> file, std::string& error) {
     if (file.size() < 8) {
         error = "file too small";
         return false;

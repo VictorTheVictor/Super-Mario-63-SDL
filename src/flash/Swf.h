@@ -156,6 +156,8 @@ struct OpaqueCharacter : Character {
 class Movie {
 public:
     bool load(const std::string& path, std::string& error);
+    // Parses a whole SWF file already in memory (e.g. read from an Android APK asset).
+    bool loadFromMemory(std::vector<uint8_t> file, std::string& error);
 
     int version = 0;
     Rect stageRect;  // twips

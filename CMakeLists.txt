@@ -7,8 +7,17 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-find_package(SDL2 REQUIRED)
+# On Android the app's build (android/app/jni/CMakeLists.txt) builds SDL2 from source
+# first and includes this project, which then produces libmain.so instead of programs.
+if(NOT ANDROID)
+    find_package(SDL2 REQUIRED)
+endif()
 find_package(Threads REQUIRED)
+if(ANDROID)
+    # Optimize native code in every build type: the interpreter-heavy game code is far
+    # too slow at -O0 to play, even in a debug APK.
+    add_compile_options(-O2)
+endif()
 
 add_library(flash STATIC
     src/flash/Inflate.cpp
@@ -64,7 +73,7 @@ endif()
 # Game scripts transpiled from the XFL source by tools/as2cpp (src/game/generated).
 # Re-run cmake after regenerating them. (No CONFIGURE_DEPENDS: its per-build glob check
 # made ninja drop its dependency log and recompile everything on every build.)
-file(GLOB GAME_SCRIPTS ${CMAKE_SOURCE_DIR}/src/game/generated/*.cpp)
+file(GLOB GAME_SCRIPTS ${CMAKE_CURRENT_SOURCE_DIR}/src/game/generated/*.cpp)
 if(NOT GAME_SCRIPTS)
     message(STATUS "No generated scripts in src/game/generated: building without game scripts")
     set(GAME_SCRIPTS src/game/NoScripts.cpp)
@@ -74,6 +83,13 @@ target_link_libraries(game PUBLIC stage)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     # Generated code: no unused-value noise; keep compile memory reasonable.
     target_compile_options(game PRIVATE -Wno-unused-value -Wno-unused-variable)
+endif()
+
+if(ANDROID)
+    # SDL's Java activity loads libSDL2.so, then libmain.so, and calls its SDL_main.
+    add_library(main SHARED src/main.cpp)
+    target_link_libraries(main PRIVATE game SDL2::SDL2)
+    return()  # the desktop tools and tests below are not built for Android
 endif()
 
 add_executable(sm63 src/main.cpp)

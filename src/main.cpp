@@ -39,7 +39,7 @@
 #include "flash/Raster.h"
 #include "flash/Swf.h"
 
-#ifdef __linux__
+#if defined(__linux__) && !defined(__ANDROID__)  // Android lacks backtrace() before API 33
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <signal.h>
@@ -464,6 +464,17 @@ extern "C" void sm63_debug_hittest(const char* path, double x, double y) {
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);  // line-buffered: partial runs still report
     if (argc >= 3 && !std::strcmp(argv[1], "--selftest")) return selfTest(argv[2]);
+#ifdef __ANDROID__
+    // The APK carries the user's SWF as an asset (see android/README.md); saves go to the
+    // app's private storage.
+    if (argc < 2) {
+        static char asset[] = "Super_Mario_63_2010.swf";
+        static char* defaultArgs[] = {argv[0], asset, nullptr};
+        argc = 2;
+        argv = defaultArgs;
+    }
+    if (const char* dir = SDL_AndroidGetInternalStoragePath()) as::setSaveDirectory(dir);
+#endif
     if (argc < 2) {
         std::fprintf(stderr,
                      "usage: %s <game.swf> [--symbol NAME] [--scale N] [--frames N --screenshot "
@@ -522,7 +533,18 @@ int main(int argc, char** argv) {
     Movie movie;
     std::string err;
     Uint32 t0 = SDL_GetTicks();
-    if (!movie.load(swfPath, err)) {
+    // Read through SDL so the same code opens a file on disk or an Android APK asset.
+    std::vector<uint8_t> swfBytes;
+    if (SDL_RWops* rw = SDL_RWFromFile(swfPath.c_str(), "rb")) {
+        Sint64 size = SDL_RWsize(rw);
+        if (size > 0) {
+            swfBytes.resize((size_t)size);
+            swfBytes.resize(SDL_RWread(rw, swfBytes.data(), 1, swfBytes.size()));
+        }
+        SDL_RWclose(rw);
+    }
+    if (swfBytes.empty()) err = "cannot open " + swfPath;
+    if (swfBytes.empty() || !movie.loadFromMemory(std::move(swfBytes), err)) {
         std::fprintf(stderr, "load failed: %s\n", err.c_str());
         return 1;
     }
@@ -679,7 +701,7 @@ int main(int argc, char** argv) {
         std::vector<InputEvent> events = parseInput(inputSpec);
         std::vector<double> tickMs, renderMs;
         for (int i = 0; i < frames; i++) {
-#ifdef __linux__
+#if defined(__linux__) && !defined(__ANDROID__)
             if (!profilePath.empty() && i == benchFrom) prof::start(profilePath.c_str());
 #endif
             if (player)
@@ -794,7 +816,7 @@ int main(int argc, char** argv) {
                 tickMs.push_back((t1 - t0) * 1000.0 / SDL_GetPerformanceFrequency());
             }
         }
-#ifdef __linux__
+#if defined(__linux__) && !defined(__ANDROID__)
         if (!profilePath.empty()) prof::stop(profilePath.c_str());
 #endif
         if (bench && !tickMs.empty()) {
@@ -1083,6 +1105,7 @@ int main(int argc, char** argv) {
                 switch (e.type) {
                     case SDL_KEYDOWN:
                         if (e.key.keysym.sym == SDLK_ESCAPE && (e.key.keysym.mod & KMOD_SHIFT)) running = false;
+                        if (e.key.keysym.sym == SDLK_AC_BACK) running = false;  // Android back button
                         // Port-only shortcuts, not passed to the game.
                         if (e.key.keysym.sym == SDLK_F11 && !e.key.repeat) {
                             bool full = SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP;

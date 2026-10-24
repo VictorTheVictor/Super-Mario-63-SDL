@@ -1,0 +1,61 @@
+plugins {
+    id 'com.android.application'
+}
+
+// SDL2 source release (not in git; see android/README.md). Its Java classes and its
+// native library are built into the app.
+def sdlDir = file("${rootDir}/deps/SDL2-2.32.10")
+
+android {
+    namespace 'org.sm63port'
+    // SDL's Java code uses constants from newer API levels; compiling against 34 does not
+    // change which devices the app runs on (minSdk) or the behavior it opts into (targetSdk).
+    compileSdk 34
+    ndkVersion '25.2.9519653'  // r25c: the last NDK that can build for API 19
+
+    defaultConfig {
+        applicationId 'org.sm63port'
+        minSdk 19     // everything SDL2 2.32 supports (Android 4.4)
+        targetSdk 29  // Android 10
+        versionCode 1
+        versionName '0.1'
+        externalNativeBuild {
+            cmake {
+                // Static C++ runtime: a shared one would have to be loaded by hand before
+                // libSDL2/libmain on Android older than 6.0.
+                arguments "-DANDROID_STL=c++_static", "-DSDL_SOURCE_DIR=${sdlDir}"
+            }
+        }
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'jni/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    sourceSets {
+        main {
+            java.srcDirs += "${sdlDir}/android-project/app/src/main/java"
+            // Put your own Super_Mario_63_2010.swf here (not in git).
+            assets.srcDirs = ["${rootDir}/assets"]
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // A test build: signed with the debug key so it installs without setup.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
