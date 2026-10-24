@@ -12,6 +12,22 @@ namespace {
 
 //   Course Clips/ 9 - Secret Stars/ 9-02 Tropical Beach/9-02 BackGFX / layer 'Kenemyple' / frame 1 /    Enemies/Normal/ A-F/ Cheep Cheeps/Cheep Cheep Code
 // onClipEvent(load)
+void clip_6492_85_0(Activation& scope) {
+    //scale = 2;
+    scope["chasespeed"] = 0.7;
+    scope["idlespeed"] = 3;
+}
+
+//   Course Clips/ 9 - Secret Stars/ 9-02 Tropical Beach/9-02 BackGFX / layer 'Kenemyple' / frame 1 /    Enemies/Normal/ A-F/ Cheep Cheeps/Cheep Cheep Code
+// onClipEvent(load)
+void clip_6492_86_0(Activation& scope) {
+    //scale = 2;
+    scope["chasespeed"] = 0.7;
+    scope["idlespeed"] = 3;
+}
+
+//   Course Clips/ 9 - Secret Stars/ 9-02 Tropical Beach/9-02 BackGFX / layer 'Kenemyple' / frame 1 /    Enemies/Normal/ A-F/ Cheep Cheeps/Cheep Cheep Code
+// onClipEvent(load)
 void clip_6492_87_0(Activation& scope) {
     //scale = 2;
     scope["chasespeed"] = 0.7;
@@ -4357,24 +4373,11 @@ void clip_6750_87_0(Activation& scope) {
     scope["_xscale"] = -100;
 }
 
-//   Course Clips/ 9 - Secret Stars/ 9-08 Kamek (Lava Battle)/9-08 Back GFX / layer 'Layer 6' / frame 3 /    Enemies/Normal/ G-Z/ Skelegoon/Skeleton Goonie Code
-// onClipEvent(load)
-void clip_6750_88_0(Activation& scope) {
-    scope["_xscale"] = -100;
-}
-
-//   Course Clips/ 9 - Secret Stars/ 9-08 Kamek (Lava Battle)/9-08 Back GFX / layer 'Layer 6' / frame 3 /   Course Items-PL/ In-course Items/ Collectables/ Starry Stuff/Shine Sprite Clip
-// onClipEvent(load)
-void clip_6750_82_0(Activation& scope) {
-    scope["invis"] = true;
-    scope["starnum"] = 51;
-    scope["timecount"] = 0;
-    scope["alternateoldframe"] = true;
-}
-
 }  // namespace
 
 void register_course_clips_9() {
+    registerClipEvent(6492, 85, clipevent::Load, clip_6492_85_0);
+    registerClipEvent(6492, 86, clipevent::Load, clip_6492_86_0);
     registerClipEvent(6492, 87, clipevent::Load, clip_6492_87_0);
     registerClipEvent(6492, 88, clipevent::Load, clip_6492_88_0);
     registerClipEvent(6492, 89, clipevent::Load, clip_6492_89_0);
@@ -4874,8 +4877,6 @@ void register_course_clips_9() {
     registerClipEvent(6750, 83, clipevent::Load, clip_6750_83_0);
     registerClipEvent(6750, 83, clipevent::EnterFrame, clip_6750_83_1);
     registerClipEvent(6750, 87, clipevent::Load, clip_6750_87_0);
-    registerClipEvent(6750, 88, clipevent::Load, clip_6750_88_0);
-    registerClipEvent(6750, 82, clipevent::Load, clip_6750_82_0);
 }
 
 }  // namespace game

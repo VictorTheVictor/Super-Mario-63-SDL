@@ -1332,6 +1332,17 @@ void frame_9349_0(Activation& scope) {
     }
 }
 
+//  Menu/Menu Folder/  Universal Stuff/ BG/Menu BG Hills Close BG / layer 'Layer 2' / frame 1
+void frame_9350_0(Activation& scope) {
+    scope["onEnterFrame"] = scope.function([](Activation& scope) -> Value {
+        scope.self["_x"] -= 0.75;
+        if (scope.self["_x"] <= -(1000)) {
+            scope["_x"] += (1000);
+        }
+        return undefined;
+    });
+}
+
 //  Menu/Menu Folder/  Universal Stuff/ BG/Menu Background Clip / layer 'RGL' / frame 1
 void frame_9373_0(Activation& scope) {
     scope["maxframe"] = 20;
@@ -3376,6 +3387,7 @@ void register_menu() {
     registerFrameScript(10108, 10, frame_10108_10);
     registerFrameScript(9371, 0, frame_9371_0);
     registerFrameScript(9349, 0, frame_9349_0);
+    registerFrameScript(9350, 0, frame_9350_0);
     registerFrameScript(9373, 0, frame_9373_0);
     registerButtonAction(9434, buttoncond::Release, button_9434_0);
     registerButtonAction(9435, buttoncond::Release, button_9435_0);

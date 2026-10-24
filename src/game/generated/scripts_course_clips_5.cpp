@@ -2806,6 +2806,68 @@ void clip_4814_44_0(Activation& scope) {
     scope["offstart"] = 0;
 }
 
+//   Course Clips/ 5 - Lethal Lava Land/Volcano (5,6)/5-5SwitchGFX / layer 'Layer 2' / frame 1
+void frame_4811_0(Activation& scope) {
+    stop();
+    scope["_alpha"] = 0;
+    scope["count"] = 0;
+    scope["wait"] = 64;
+    //duration = 400;
+    scope["duration"] = 640;
+    scope["onEnterFrame"] = scope.function([](Activation& scope) -> Value {
+        if (scope["_parent"]["SwitchPL"] == true) {
+            nextFrame();
+        }
+        return undefined;
+    });
+}
+
+//   Course Clips/ 5 - Lethal Lava Land/Volcano (5,6)/5-5SwitchGFX / layer 'Layer 2' / frame 2
+void frame_4811_1(Activation& scope) {
+    // Activated Sound fx
+    _root["Mariosound"] = new_(Sound, scope.self);
+    _root["Mariosound"]["attachSound"]("Tick");
+    _root["Mariosound"]["start"](0, 1);
+    _root["Mariosound"]["setVolume"](_root["MarioVolume"]);
+    //
+    scope["onEnterFrame"] = scope.function([](Activation& scope) -> Value {
+        if (_root["playpause"] == false && _root["PauseGame"] == false) {
+            if (scope["_alpha"] <= 100 && scope["count"] < scope["duration"]) {
+                scope["_alpha"] += 20;
+                scope["_alpha"] = Math["min"](scope["_alpha"], 100);
+            }
+            scope["count"]++;
+            if ((scope["count"] / scope["wait"]) == Math["round"](scope["count"] / scope["wait"])) {
+                if (scope["count"] > (0.5) * scope["duration"]) {
+                    scope["wait"] = 16;
+                    if (scope["count"] > (0.75) * scope["duration"]) {
+                        scope["wait"] = 8;
+                        scope["_alpha"] = 60;
+                    }
+                    if (scope["count"] > (0.9) * scope["duration"]) {
+                        scope["wait"] = 4;
+                        scope["_alpha"] = 40;
+                    }
+                }
+                _root["Mariosound"] = new_(Sound, scope.self);
+                _root["Mariosound"]["attachSound"]("Tick");
+                _root["Mariosound"]["start"](0, 1);
+                _root["Mariosound"]["setVolume"](_root["MarioVolume"]);
+            }
+            if (scope["count"] > scope["duration"]) {
+                scope["wait"] = scope["duration"];
+                scope["_alpha"] -= 10;
+                if (scope["_alpha"] <= 0) {
+                    scope["count"] = 0;
+                    scope["_parent"]["SwitchPL"] = false;
+                    prevFrame();
+                }
+            }
+        }
+        return undefined;
+    });
+}
+
 //   Course Clips/ 5 - Lethal Lava Land/Volcano (5,6)/5-5SwitchPLGround / layer 'Layer 2' / frame 1
 void frame_4816_0(Activation& scope) {
     scope["onEnterFrame"] = scope.function([](Activation& scope) -> Value {
@@ -4197,28 +4259,6 @@ void clip_4953_30_0(Activation& scope) {
     scope["dotdistance"] = 370;
 }
 
-//   Course Clips/ 6 - Tall Tall Mountian/ 6-1 & 6-2/6-2 Back GFX / layer 'Ground/Enem' / frame 1 /   Course Items-PL/ Various Platforms/ Common Coded PL/ Green PL/Green Circle Platform
-// onClipEvent(load)
-void clip_4953_31_0(Activation& scope) {
-    scope["scale"] = 1;
-    scope["distance"] = 50;
-    //armscale = 75
-    scope["speed"] = -3;
-    scope["angle"] = 0;
-    scope["dotdistance"] = 370;
-}
-
-//   Course Clips/ 6 - Tall Tall Mountian/ 6-1 & 6-2/6-2 Back GFX / layer 'Ground/Enem' / frame 1 /   Course Items-PL/ Various Platforms/ Common Coded PL/ Green PL/Green Circle Platform
-// onClipEvent(load)
-void clip_4953_32_0(Activation& scope) {
-    scope["scale"] = 1;
-    scope["distance"] = 50;
-    //armscale = 75
-    scope["speed"] = 3;
-    scope["angle"] = 270;
-    scope["dotdistance"] = 370;
-}
-
 }  // namespace
 
 void register_course_clips_5() {
@@ -4439,6 +4479,8 @@ void register_course_clips_5() {
     registerClipEvent(4814, 42, clipevent::Load, clip_4814_42_0);
     registerClipEvent(4814, 43, clipevent::Load, clip_4814_43_0);
     registerClipEvent(4814, 44, clipevent::Load, clip_4814_44_0);
+    registerFrameScript(4811, 0, frame_4811_0);
+    registerFrameScript(4811, 1, frame_4811_1);
     registerFrameScript(4816, 0, frame_4816_0);
     registerFrameScript(4841, 0, frame_4841_0);
     registerFrameScript(4845, 0, frame_4845_0);
@@ -4575,8 +4617,6 @@ void register_course_clips_5() {
     registerClipEvent(4953, 25, clipevent::Load, clip_4953_25_0);
     registerClipEvent(4953, 26, clipevent::Load, clip_4953_26_0);
     registerClipEvent(4953, 30, clipevent::Load, clip_4953_30_0);
-    registerClipEvent(4953, 31, clipevent::Load, clip_4953_31_0);
-    registerClipEvent(4953, 32, clipevent::Load, clip_4953_32_0);
 }
 
 }  // namespace game

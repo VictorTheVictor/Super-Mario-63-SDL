@@ -148,6 +148,12 @@ class Mapper:
                         cost += 0 if inst.name == c.name else 50
                     if known is not None and c.char_id != known:
                         cost += 1000
+                    # A movie clip or button instance compiles to a sprite or button
+                    # placement, never a plain shape (graphic symbols may be flattened);
+                    # without this, placements sharing a matrix (often the identity) were
+                    # matched to whichever came first.
+                    if inst.symbol_type != "graphic" and self.swf.kinds.get(c.char_id) not in ("sprite", "button"):
+                        cost += 20
                     if inst.script and not c.clip_actions and inst.symbol_type != "button":
                         cost += 1  # prefer the scripted placement on ties
                     if cost < best_cost:
@@ -188,6 +194,24 @@ class Mapper:
         return any(p.library_item == inst.library_item and norm(p.script) == norm(inst.script)
                    for p in prev_kf.instances)
 
+    def unpaired_used_symbols(self):
+        """Symbols with scripts that a paired timeline places but that were never matched
+        to a sprite: their scripts would be lost silently, so they are reported."""
+        used = set()
+        for name in self.sym_to_sprite:
+            timeline = self.doc.main if name == "<main>" else self.doc.symbols[name].timeline
+            for layer in (timeline.layers if timeline else []):
+                for kf in layer.keyframes:
+                    # Graphic symbols' scripts never run in Flash.
+                    used.update(inst.library_item for inst in kf.instances if inst.symbol_type != "graphic")
+        out = []
+        for name in sorted(used - set(self.sym_to_sprite)):
+            sym = self.doc.symbols.get(name)
+            if sym and sym.timeline and any(kf.script or any(i.script for i in kf.instances)
+                                            for layer in sym.timeline.layers for kf in layer.keyframes):
+                out.append(name)
+        return out
+
     def unreachable_scripts(self):
         """Scripts in symbols that never made it into the SWF (unused library items)."""
         n = 0
@@ -223,6 +247,7 @@ if __name__ == "__main__":
     print(f"SWF has {total_swf} DoActions, {clip_places} placements with clip actions, "
           f"{buttons} buttons with actions")
     print(f"problems: {len(m.problems)}; scripts in unused symbols: {m.unreachable_scripts()}")
+    print(f"used symbols with scripts left unpaired: {m.unpaired_used_symbols()}")
     reasons = {}
     for o, r in m.problems:
         reasons[r.split(' but ')[0] if 'DoActions' in r else r] = reasons.get(r, 0) + 1

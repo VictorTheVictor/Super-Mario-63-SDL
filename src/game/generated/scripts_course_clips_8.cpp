@@ -11,6 +11,24 @@ namespace game {
 namespace {
 
 //   Course Clips/ 8 - Storyline Stars/ 8 - Tutorials/ FiRsT Tutoria/8-E1-1 Back GFX / layer 'Layer 1' / frame 1 /   Course Items-PL/ Decoration/ Signs & Fences/ Coded Sign/Coded Sign
+// onClipEvent(load)
+void clip_6254_3_0(Activation& scope) {
+    scope["read"] = false;
+    scope["count"] = 0;
+    scope["picture"] = true;
+    scope["signmessage"] = "Start";
+    //signmessage = "Mario;  to move around, you can use the Right and Left keys.  To jump, press the Up key.  To duck, you can press Down while you are on the ground.  If you feel daring, you could press Down while airborne to Dive forwards, giving you greater distance and destroying certain enemies.";
+    //signmessage = "To read a Sign, walk up to it (using the Arrow Keys), and press UP.\n\nTry it on that sign over there.\n\n\n--->";
+    scope["depth"] = _root["Course"]["BackGFX"]["getNextHighestDepth"]();
+    _root["Course"]["BackGFX"]["createEmptyMovieClip"]("sign2center" + scope["depth"], scope["depth"]);
+    _root["Course"]["BackGFX"]["sign2center" + scope["depth"]]["_x"] = _root["Course"]["BackGFX"]["sign2"]["_x"];
+    _root["Course"]["BackGFX"]["sign2center" + scope["depth"]]["_y"] = _root["Course"]["BackGFX"]["sign2"]["_y"] - 60;
+    scope["othercamcenter"] = _root["Course"]["BackGFX"]["sign2center" + scope["depth"]];
+    scope["waiting"] = 0;
+    scope["replacey"] = false;
+}
+
+//   Course Clips/ 8 - Storyline Stars/ 8 - Tutorials/ FiRsT Tutoria/8-E1-1 Back GFX / layer 'Layer 1' / frame 1 /   Course Items-PL/ Decoration/ Signs & Fences/ Coded Sign/Coded Sign
 // onClipEvent(enterFrame)
 void clip_6254_3_1(Activation& scope) {
     if (_root["PauseGame"] == false) {
@@ -4965,25 +4983,10 @@ void clip_6469_115_1(Activation& scope) {
     }
 }
 
-//   Course Clips/ 9 - Secret Stars/ 9-02 Tropical Beach/9-02 BackGFX / layer 'Kenemyple' / frame 1 /    Enemies/Normal/ A-F/ Cheep Cheeps/Cheep Cheep Code
-// onClipEvent(load)
-void clip_6492_85_0(Activation& scope) {
-    //scale = 2;
-    scope["chasespeed"] = 0.7;
-    scope["idlespeed"] = 3;
-}
-
-//   Course Clips/ 9 - Secret Stars/ 9-02 Tropical Beach/9-02 BackGFX / layer 'Kenemyple' / frame 1 /    Enemies/Normal/ A-F/ Cheep Cheeps/Cheep Cheep Code
-// onClipEvent(load)
-void clip_6492_86_0(Activation& scope) {
-    //scale = 2;
-    scope["chasespeed"] = 0.7;
-    scope["idlespeed"] = 3;
-}
-
 }  // namespace
 
 void register_course_clips_8() {
+    registerClipEvent(6254, 3, clipevent::Load, clip_6254_3_0);
     registerClipEvent(6254, 3, clipevent::EnterFrame, clip_6254_3_1);
     registerClipEvent(6254, 4, clipevent::Load, clip_6254_4_0);
     registerFrameScript(6254, 0, frame_6254_0);
@@ -5455,8 +5458,6 @@ void register_course_clips_8() {
     registerClipEvent(6469, 112, clipevent::EnterFrame, clip_6469_112_1);
     registerClipEvent(6469, 115, clipevent::Load, clip_6469_115_0);
     registerClipEvent(6469, 115, clipevent::EnterFrame, clip_6469_115_1);
-    registerClipEvent(6492, 85, clipevent::Load, clip_6492_85_0);
-    registerClipEvent(6492, 86, clipevent::Load, clip_6492_86_0);
 }
 
 }  // namespace game

@@ -10,6 +10,21 @@
 namespace game {
 namespace {
 
+//   Course Clips/ 9 - Secret Stars/ 9-08 Kamek (Lava Battle)/9-08 Back GFX / layer 'Layer 6' / frame 3 /    Enemies/Normal/ G-Z/ Skelegoon/Skeleton Goonie Code
+// onClipEvent(load)
+void clip_6750_88_0(Activation& scope) {
+    scope["_xscale"] = -100;
+}
+
+//   Course Clips/ 9 - Secret Stars/ 9-08 Kamek (Lava Battle)/9-08 Back GFX / layer 'Layer 6' / frame 3 /   Course Items-PL/ In-course Items/ Collectables/ Starry Stuff/Shine Sprite Clip
+// onClipEvent(load)
+void clip_6750_82_0(Activation& scope) {
+    scope["invis"] = true;
+    scope["starnum"] = 51;
+    scope["timecount"] = 0;
+    scope["alternateoldframe"] = true;
+}
+
 //   Course Clips/ 9 - Secret Stars/ 9-08 Kamek (Lava Battle)/9-08 Back GFX / layer 'Layer 6' / frame 3 /   Course Items-PL/ In-course Items/ Collectables/ Starry Stuff/Shine Sprite Clip
 // onClipEvent(enterFrame)
 void clip_6750_82_1(Activation& scope) {
@@ -5817,6 +5832,8 @@ void clip_2539_42_0(Activation& scope) {
 }  // namespace
 
 void register_course_clips_10() {
+    registerClipEvent(6750, 88, clipevent::Load, clip_6750_88_0);
+    registerClipEvent(6750, 82, clipevent::Load, clip_6750_82_0);
     registerClipEvent(6750, 82, clipevent::EnterFrame, clip_6750_82_1);
     registerFrameScript(6753, 0, frame_6753_0);
     registerFrameScript(6752, 0, frame_6752_0);

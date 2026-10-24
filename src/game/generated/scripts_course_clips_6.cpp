@@ -12,6 +12,28 @@ namespace {
 
 //   Course Clips/ 6 - Tall Tall Mountian/ 6-1 & 6-2/6-2 Back GFX / layer 'Ground/Enem' / frame 1 /   Course Items-PL/ Various Platforms/ Common Coded PL/ Green PL/Green Circle Platform
 // onClipEvent(load)
+void clip_4953_31_0(Activation& scope) {
+    scope["scale"] = 1;
+    scope["distance"] = 50;
+    //armscale = 75
+    scope["speed"] = -3;
+    scope["angle"] = 0;
+    scope["dotdistance"] = 370;
+}
+
+//   Course Clips/ 6 - Tall Tall Mountian/ 6-1 & 6-2/6-2 Back GFX / layer 'Ground/Enem' / frame 1 /   Course Items-PL/ Various Platforms/ Common Coded PL/ Green PL/Green Circle Platform
+// onClipEvent(load)
+void clip_4953_32_0(Activation& scope) {
+    scope["scale"] = 1;
+    scope["distance"] = 50;
+    //armscale = 75
+    scope["speed"] = 3;
+    scope["angle"] = 270;
+    scope["dotdistance"] = 370;
+}
+
+//   Course Clips/ 6 - Tall Tall Mountian/ 6-1 & 6-2/6-2 Back GFX / layer 'Ground/Enem' / frame 1 /   Course Items-PL/ Various Platforms/ Common Coded PL/ Green PL/Green Circle Platform
+// onClipEvent(load)
 void clip_4953_33_0(Activation& scope) {
     scope["scale"] = 1;
     scope["distance"] = 50;
@@ -4489,72 +4511,11 @@ void frame_5170_0(Activation& scope) {
     stop();
 }
 
-//   Course Clips/ 7 - Rainbow Ride/7-2 Rotating Triangles GFX / layer 'Layer 8' / frame 10
-void frame_5170_1(Activation& scope) {
-    scope["count"] = 0;
-    scope["wait"] = 32;
-    scope["duration"] = 800;
-    // Activated Sound fx
-    if (scope["sound"] == true) {
-        _root["Mariosound"] = new_(Sound, scope.self);
-        _root["Mariosound"]["attachSound"]("Tick");
-        _root["Mariosound"]["start"](0, 1);
-        _root["Mariosound"]["setVolume"](_root["MarioVolume"]);
-    }
-    //
-    scope["onEnterFrame"] = scope.function([](Activation& scope) -> Value {
-        scope["count"]++;
-        if ((scope["count"] / scope["wait"]) == Math["round"](scope["count"] / scope["wait"]) && scope["count"] <= scope["duration"] && scope["sound"] == true) {
-            if (scope["count"] > (0.5) * scope["duration"]) {
-                scope["wait"] = 16;
-                if (scope["count"] > (0.75) * scope["duration"]) {
-                    scope["wait"] = 8;
-                    play();
-                }
-                if (scope["count"] > (0.9) * scope["duration"]) {
-                    scope["wait"] = 4;
-                    play();
-                }
-            }
-            _root["Mariosound"] = new_(Sound, scope.self);
-            _root["Mariosound"]["attachSound"]("Tick");
-            _root["Mariosound"]["start"](0, 1);
-            _root["Mariosound"]["setVolume"](_root["MarioVolume"]);
-        } else if (scope["count"] > scope["duration"]) {
-            scope["wait"] = scope["duration"];
-            if (scope["_currentframe"] >= 10) {
-                gotoAndStop(9);
-            }
-            prevFrame();
-            if (scope["_currentframe"] <= 1) {
-                scope["count"] = 0;
-                stop();
-                //_root.Course.Platforms[itemname].removeMovieClip();
-                scope["onEnterFrame"] = Value::null();
-            }
-        }
-        return undefined;
-    });
-}
-
-//   Course Clips/ 7 - Rainbow Ride/7-2 Rotating Triangles GFX / layer 'Layer 8' / frame 11
-void frame_5170_2(Activation& scope) {
-    stop();
-}
-
-//   Course Clips/ 7 - Rainbow Ride/7-2 Rotating Triangles GFX / layer 'Layer 8' / frame 14
-void frame_5170_3(Activation& scope) {
-    gotoAndStop(11);
-}
-
-//   Course Clips/ 8 - Bowser's Castle/8-3 Back GFX / layer 'HL' / frame 3
-void frame_5352_0(Activation& scope) {
-    stop();
-}
-
 }  // namespace
 
 void register_course_clips_6() {
+    registerClipEvent(4953, 31, clipevent::Load, clip_4953_31_0);
+    registerClipEvent(4953, 32, clipevent::Load, clip_4953_32_0);
     registerClipEvent(4953, 33, clipevent::Load, clip_4953_33_0);
     registerClipEvent(4953, 34, clipevent::Load, clip_4953_34_0);
     registerClipEvent(4953, 35, clipevent::Load, clip_4953_35_0);
@@ -5007,10 +4968,6 @@ void register_course_clips_6() {
     registerFrameScript(5157, 0, frame_5157_0);
     registerFrameScript(5157, 1, frame_5157_1);
     registerFrameScript(5170, 0, frame_5170_0);
-    registerFrameScript(5170, 1, frame_5170_1);
-    registerFrameScript(5170, 2, frame_5170_2);
-    registerFrameScript(5170, 3, frame_5170_3);
-    registerFrameScript(5352, 0, frame_5352_0);
 }
 
 }  // namespace game

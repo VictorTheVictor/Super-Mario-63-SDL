@@ -31,11 +31,18 @@ void frame_9280_0(Activation& scope) {
     });
 }
 
+// Preloader (after) Disclaimers / layer 'Layer 3' / frame 158 / Website Link Button
+// on(release)
+void button_9239_0(Activation& scope) {
+    _root["getURL"]("http://runouw.com", "_blank");
+}
+
 }  // namespace
 
 void register_preloader_after_disclaimers() {
     registerFrameScript(9280, 1, frame_9280_1);
     registerFrameScript(9280, 0, frame_9280_0);
+    registerButtonAction(9239, buttoncond::Release, button_9239_0);
 }
 
 }  // namespace game

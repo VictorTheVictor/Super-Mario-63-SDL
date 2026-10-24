@@ -1,16 +1,15 @@
 as2cpp report
 =============
 
-frame scripts: 2604, instance scripts: 5718 (6247 handlers), button scripts: 6
-files: 329, lines: 147377
+frame scripts: 2609, instance scripts: 5739 (6269 handlers), button scripts: 7
+files: 332, lines: 147703
 
 Translation errors (0):
 
 Unsupported constructs (0):
 
-Mapping problems (6):
+Mapping problems (5):
   1 scripts but 2 DoActions   [  Course Clips/ C - Castle/Castle Inside/ Section C & D/C-13 BG / layer 'Layer 1' / frame 160]
-  placement has no clip actions   [Preloader (after) Disclaimers / layer 'Layer 3' / frame 158 / Website Link Button]
   conflicting pairing with sprite 3590   [Cinema End Course Viewer]
   conflicting pairing with sprite 4682   [  Course Clips/ 5 - Lethal Lava Land/ Sides (2,3)/5-2 Wheels Pole Tint]
   no matching placement   [  Course Clips/ 5 - Lethal Lava Land/ Sides (2,3)/5-2 Spinning Ground GFX / layer 'Base' / frame 1 /   Course Clips/ 5 - Lethal Lava Land/ Sides (2,3)/5-2 Wheel Tint]
@@ -44,4 +43,4 @@ Low bytecode verification (26; often constant-folded strings):
   0.67 frame (2047, 22)   [Luigi Exit Painting / layer 'Code' / frame 154]
   0.78 frame (737, 0)   [Pause New SM / layer 'Layer 2' / frame 1]
 
-Scripts in library symbols that are not in the SWF: 213
+Scripts in library symbols that are not in the SWF: 187

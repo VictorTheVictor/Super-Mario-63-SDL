@@ -10,6 +10,69 @@
 namespace game {
 namespace {
 
+//   Course Clips/ 7 - Rainbow Ride/7-2 Rotating Triangles GFX / layer 'Layer 8' / frame 10
+void frame_5170_1(Activation& scope) {
+    scope["count"] = 0;
+    scope["wait"] = 32;
+    scope["duration"] = 800;
+    // Activated Sound fx
+    if (scope["sound"] == true) {
+        _root["Mariosound"] = new_(Sound, scope.self);
+        _root["Mariosound"]["attachSound"]("Tick");
+        _root["Mariosound"]["start"](0, 1);
+        _root["Mariosound"]["setVolume"](_root["MarioVolume"]);
+    }
+    //
+    scope["onEnterFrame"] = scope.function([](Activation& scope) -> Value {
+        scope["count"]++;
+        if ((scope["count"] / scope["wait"]) == Math["round"](scope["count"] / scope["wait"]) && scope["count"] <= scope["duration"] && scope["sound"] == true) {
+            if (scope["count"] > (0.5) * scope["duration"]) {
+                scope["wait"] = 16;
+                if (scope["count"] > (0.75) * scope["duration"]) {
+                    scope["wait"] = 8;
+                    play();
+                }
+                if (scope["count"] > (0.9) * scope["duration"]) {
+                    scope["wait"] = 4;
+                    play();
+                }
+            }
+            _root["Mariosound"] = new_(Sound, scope.self);
+            _root["Mariosound"]["attachSound"]("Tick");
+            _root["Mariosound"]["start"](0, 1);
+            _root["Mariosound"]["setVolume"](_root["MarioVolume"]);
+        } else if (scope["count"] > scope["duration"]) {
+            scope["wait"] = scope["duration"];
+            if (scope["_currentframe"] >= 10) {
+                gotoAndStop(9);
+            }
+            prevFrame();
+            if (scope["_currentframe"] <= 1) {
+                scope["count"] = 0;
+                stop();
+                //_root.Course.Platforms[itemname].removeMovieClip();
+                scope["onEnterFrame"] = Value::null();
+            }
+        }
+        return undefined;
+    });
+}
+
+//   Course Clips/ 7 - Rainbow Ride/7-2 Rotating Triangles GFX / layer 'Layer 8' / frame 11
+void frame_5170_2(Activation& scope) {
+    stop();
+}
+
+//   Course Clips/ 7 - Rainbow Ride/7-2 Rotating Triangles GFX / layer 'Layer 8' / frame 14
+void frame_5170_3(Activation& scope) {
+    gotoAndStop(11);
+}
+
+//   Course Clips/ 8 - Bowser's Castle/8-3 Back GFX / layer 'HL' / frame 3
+void frame_5352_0(Activation& scope) {
+    stop();
+}
+
 //   Course Clips/ 8 - Bowser's Castle/8-3 Back GFX / layer 'HL' / frame 3 /   Course Items-PL/ In-course Items/ Other/Camera Control Box
 // onClipEvent(load)
 void clip_5352_90_0(Activation& scope) {
@@ -4091,27 +4154,13 @@ void clip_6254_1_0(Activation& scope) {
     scope["othercamcenter"] = _root["Course"]["BackGFX"]["target3"];
 }
 
-//   Course Clips/ 8 - Storyline Stars/ 8 - Tutorials/ FiRsT Tutoria/8-E1-1 Back GFX / layer 'Layer 1' / frame 1 /   Course Items-PL/ Decoration/ Signs & Fences/ Coded Sign/Coded Sign
-// onClipEvent(load)
-void clip_6254_3_0(Activation& scope) {
-    scope["read"] = false;
-    scope["count"] = 0;
-    scope["picture"] = true;
-    scope["signmessage"] = "Start";
-    //signmessage = "Mario;  to move around, you can use the Right and Left keys.  To jump, press the Up key.  To duck, you can press Down while you are on the ground.  If you feel daring, you could press Down while airborne to Dive forwards, giving you greater distance and destroying certain enemies.";
-    //signmessage = "To read a Sign, walk up to it (using the Arrow Keys), and press UP.\n\nTry it on that sign over there.\n\n\n--->";
-    scope["depth"] = _root["Course"]["BackGFX"]["getNextHighestDepth"]();
-    _root["Course"]["BackGFX"]["createEmptyMovieClip"]("sign2center" + scope["depth"], scope["depth"]);
-    _root["Course"]["BackGFX"]["sign2center" + scope["depth"]]["_x"] = _root["Course"]["BackGFX"]["sign2"]["_x"];
-    _root["Course"]["BackGFX"]["sign2center" + scope["depth"]]["_y"] = _root["Course"]["BackGFX"]["sign2"]["_y"] - 60;
-    scope["othercamcenter"] = _root["Course"]["BackGFX"]["sign2center" + scope["depth"]];
-    scope["waiting"] = 0;
-    scope["replacey"] = false;
-}
-
 }  // namespace
 
 void register_course_clips_7() {
+    registerFrameScript(5170, 1, frame_5170_1);
+    registerFrameScript(5170, 2, frame_5170_2);
+    registerFrameScript(5170, 3, frame_5170_3);
+    registerFrameScript(5352, 0, frame_5352_0);
     registerClipEvent(5352, 90, clipevent::Load, clip_5352_90_0);
     registerClipEvent(5352, 91, clipevent::Load, clip_5352_91_0);
     registerClipEvent(5352, 92, clipevent::Load, clip_5352_92_0);
@@ -4483,7 +4532,6 @@ void register_course_clips_7() {
     registerClipEvent(6254, 13, clipevent::Load, clip_6254_13_0);
     registerClipEvent(6254, 14, clipevent::Load, clip_6254_14_0);
     registerClipEvent(6254, 1, clipevent::Load, clip_6254_1_0);
-    registerClipEvent(6254, 3, clipevent::Load, clip_6254_3_0);
 }
 
 }  // namespace game
