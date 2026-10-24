@@ -47,8 +47,10 @@ Requires a C++17 compiler, CMake and SDL2. `third_party/minimp3` (CC0) is vendor
     ./build/audio_test path/to/Super_Mario_63_2010.swf [sine.mp3] # decoders, mixer, Sound API
 
 Symbol viewer keys: Space play/pause, Left/Right step a frame, Escape quit.
-Game mode: input goes to the game; Shift+Escape quits. F11 toggles fullscreen, F2 toggles
+Game mode: input goes to the game; Shift+Escape quits. F11 toggles fullscreen, F4 toggles
 crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F3 toggles smooth motion.
+Debugging: F2 toggles noclip (arrow keys fly Mario through walls, Shift for speed), F9
+writes `sm63-dump-N.txt` (display tree) and `sm63-dump-N.bmp` (frame).
 The window title shows the rendered frames per second.
 
 ### Smooth motion
@@ -65,7 +67,7 @@ vsync. `--no-smooth-motion` (or F3) draws only at game ticks.
 The game renders at the window's real pixel size (letterboxed to the stage's 3:2), so a
 maximized or fullscreen window shows sharper vector art instead of an upscaled 450×300
 image. Bitmaps drawn larger than their native size use nearest-neighbor sampling (crisp
-pixels) unless `--smooth` is given or F2 is pressed.
+pixels) unless `--smooth` is given or F4 is pressed.
 
 Rendering splits each frame into horizontal bands drawn on all hardware threads
 (`--threads N` to change). Filtered layers (glows, bevels, shadows) are kept between

@@ -192,6 +192,24 @@ std::vector<InputEvent> parseInput(const std::string& spec) {
     return out;
 }
 
+// One line per object: name, kind (clip frame), depth, mask depth, world bounds in
+// stage pixels, visibility, alpha, scale, blend mode, filters and color transform.
+void printTree(FILE* out, flash::DisplayObject& d, int depth, int maxDepth) {
+    flash::Rect b = d.worldMatrix().apply(d.localBounds());
+    auto* mc = dynamic_cast<MovieClip*>(&d);
+    char kind[32];
+    std::snprintf(kind, sizeof kind, "clip f%d/%d", mc ? mc->currentFrame() : 0, mc ? mc->totalFrames() : 0);
+    std::fprintf(out,
+                 "  %*s%s [%s %d] depth %d clipDepth %d bounds (%.0f,%.0f)-(%.0f,%.0f) %s alpha %.2f xs %.2f ys %.2f"
+                 " blend %d filters %zu cxadd %.0f,%.0f,%.0f mul %.2f,%.2f,%.2f\n",
+                 depth * 2, "", d.name.empty() ? "-" : d.name.c_str(), mc ? kind : d.definition() ? "shape/text" : "?",
+                 d.definition() ? d.definition()->id : -1, d.depth, d.clipDepth, b.xMin / 20, b.yMin / 20, b.xMax / 20,
+                 b.yMax / 20, d.visible ? "visible" : "HIDDEN", d.cxform.aMul, d.matrix.a, d.matrix.d, d.blendMode,
+                 d.filters.size(), d.cxform.rAdd, d.cxform.gAdd, d.cxform.bAdd, d.cxform.rMul, d.cxform.gMul,
+                 d.cxform.bMul);
+    if (depth < maxDepth) d.forEachChild([&](flash::DisplayObject& c) { printTree(out, c, depth + 1, maxDepth); });
+}
+
 bool saveBmp(const Surface& s, const char* path) {
     SDL_Surface* out = SDL_CreateRGBSurfaceWithFormatFrom(
         (void*)s.pixels.data(), s.width, s.height, 32, s.width * 4, SDL_PIXELFORMAT_ARGB8888);
@@ -611,9 +629,37 @@ int main(int argc, char** argv) {
         renderDisplayObject(*symbolStage, rast, surf, {0, 0, surf.width, surf.height},
                             Matrix::scale(0.05 * s, 0.05 * s), ColorTransform{}, movie);
     };
+    // Debug noclip (F2): Mario flies with the arrow keys (Shift: faster), and his position
+    // is pinned before and after every tick so the game's physics and collisions can't
+    // move him. The camera follows him as usual.
+    bool noclip = false;
+    double noclipX = 0, noclipY = 0;
+    auto charValue = [&]() -> as::Value {
+        flash::DisplayObject* c = player ? as::resolvePath(&player->root(), "_root.Course.Char") : nullptr;
+        return c ? as::valueOf(c) : as::Value();
+    };
+    auto pinChar = [&]() {
+        as::Value c = charValue();
+        if (!c.isObject()) return;
+        as::setMember(c, as::intern("_x"), noclipX);
+        as::setMember(c, as::intern("_y"), noclipY);
+        as::setMember(c, as::intern("xspeed"), 0);
+        as::setMember(c, as::intern("yspeed"), 0);
+    };
     auto tick = [&]() {
-        if (player) player->tick();
-        else symbolStage->advance();
+        if (!player) {
+            symbolStage->advance();
+            return;
+        }
+        if (noclip) {
+            const Uint8* k = SDL_GetKeyboardState(nullptr);
+            double speed = (k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT]) ? 24 : 8;
+            noclipX += speed * (k[SDL_SCANCODE_RIGHT] - k[SDL_SCANCODE_LEFT]);
+            noclipY += speed * (k[SDL_SCANCODE_DOWN] - k[SDL_SCANCODE_UP]);
+            pinChar();
+        }
+        player->tick();
+        if (noclip) pinChar();
     };
     auto reportMissing = [&]() {
         if (player && !player->missingScripts().empty())
@@ -789,23 +835,7 @@ int main(int argc, char** argv) {
                             c.visible ? "" : " hidden", c.characterId, c.handlerMask, c.methods.c_str());
             // --tree PATH: subtree with world bounds (stage px), visibility and scale
             if (!treePath.empty()) {
-                std::function<void(flash::DisplayObject&, int)> tree = [&](flash::DisplayObject& d, int depth) {
-                    flash::Rect b = d.worldMatrix().apply(d.localBounds());
-                    auto* dmc = dynamic_cast<MovieClip*>(&d);
-                    char kindBuf[32];
-                    std::snprintf(kindBuf, sizeof kindBuf, "clip f%d/%d", dmc ? dmc->currentFrame() : 0,
-                                  dmc ? dmc->totalFrames() : 0);
-                    const char* kind = dmc ? kindBuf : d.definition() ? "shape/text" : "?";
-                    std::printf("  %*s%s [%s %d] depth %d clipDepth %d bounds (%.0f,%.0f)-(%.0f,%.0f) %s alpha %.2f xs %.2f ys %.2f"
-                                " blend %d filters %zu cxadd %.0f,%.0f,%.0f mul %.2f,%.2f,%.2f\n",
-                                depth * 2, "", d.name.empty() ? "-" : d.name.c_str(), kind, d.definition() ? d.definition()->id : -1, d.depth, d.clipDepth,
-                                b.xMin / 20, b.yMin / 20, b.xMax / 20,
-                                b.yMax / 20, d.visible ? "visible" : "HIDDEN", d.cxform.aMul, d.matrix.a, d.matrix.d, d.blendMode,
-                                d.filters.size(), d.cxform.rAdd, d.cxform.gAdd, d.cxform.bAdd, d.cxform.rMul, d.cxform.gMul,
-                                d.cxform.bMul);
-                    if (depth < 8) d.forEachChild([&](flash::DisplayObject& c) { tree(c, depth + 1); });
-                };
-                if (auto* d = as::resolvePath(&r, treePath)) tree(*d, 0);
+                if (auto* d = as::resolvePath(&r, treePath)) printTree(stdout, *d, 0, 8);
                 else std::printf("  %s: not found\n", treePath.c_str());
             }
             for (const auto& t : player->textOverflows()) sm63_debug_textfield(t.path.c_str());
@@ -918,8 +948,8 @@ int main(int argc, char** argv) {
         double secs = (SDL_GetPerformanceCounter() - fpsSince) / (double)SDL_GetPerformanceFrequency();
         if (player && secs >= 1) {
             char title[96];
-            std::snprintf(title, sizeof title, "Super Mario 63 — %.0f fps, %dx%d%s", framesShown / secs, surf.width,
-                          surf.height, smooth ? "" : " (smooth motion off)");
+            std::snprintf(title, sizeof title, "Super Mario 63 — %.0f fps, %dx%d%s%s", framesShown / secs, surf.width,
+                          surf.height, smooth ? "" : " (smooth motion off)", noclip ? " [NOCLIP]" : "");
             SDL_SetWindowTitle(win, title);
             framesShown = 0;
             fpsSince = SDL_GetPerformanceCounter();
@@ -940,16 +970,53 @@ int main(int argc, char** argv) {
                             SDL_SetWindowFullscreen(win, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
                             break;
                         }
+                        if (e.key.keysym.sym == SDLK_F9 && !e.key.repeat) {
+                            // Debug snapshot: the whole display tree plus the current frame.
+                            static int dumps = 0;
+                            dumps++;
+                            char path[64];
+                            std::snprintf(path, sizeof path, "sm63-dump-%d.txt", dumps);
+                            if (FILE* f = std::fopen(path, "w")) {
+                                for (const char* v : {"_root.coursescale", "_root.Course._x", "_root.Course._y",
+                                                      "_root.Course.Char._x", "_root.Course.Char._y"}) {
+                                    std::string p = v;
+                                    size_t dot = p.rfind('.');
+                                    flash::DisplayObject* base = as::resolvePath(&player->root(), p.substr(0, dot));
+                                    as::Value val = base ? as::getMember(as::valueOf(base), as::intern(p.substr(dot + 1)))
+                                                         : as::Value();
+                                    std::fprintf(f, "%s = %s\n", v, val.toString().c_str());
+                                }
+                                printTree(f, player->root(), 0, 14);
+                                std::fclose(f);
+                            }
+                            std::snprintf(path, sizeof path, "sm63-dump-%d.bmp", dumps);
+                            saveBmp(surf, path);
+                            std::printf("wrote sm63-dump-%d.txt and .bmp\n", dumps);
+                            break;
+                        }
                         if (e.key.keysym.sym == SDLK_F3 && !e.key.repeat) {
                             smooth = !smooth;
                             redraw = true;
                             break;
                         }
                         if (e.key.keysym.sym == SDLK_F2 && !e.key.repeat) {
+                            noclip = !noclip;
+                            as::Value c = charValue();
+                            if (c.isObject()) {
+                                noclipX = as::getMember(c, as::intern("_x")).toNumber();
+                                noclipY = as::getMember(c, as::intern("_y")).toNumber();
+                            }
+                            std::printf("noclip %s\n", noclip ? "on (arrows fly, Shift faster)" : "off");
+                            break;
+                        }
+                        if (e.key.keysym.sym == SDLK_F4 && !e.key.repeat) {
                             renderSettings.crispBitmaps = !renderSettings.crispBitmaps;
                             redraw = true;
                             break;
                         }
+                        if (noclip && (e.key.keysym.sym == SDLK_LEFT || e.key.keysym.sym == SDLK_RIGHT ||
+                                       e.key.keysym.sym == SDLK_UP || e.key.keysym.sym == SDLK_DOWN))
+                            break;  // noclip flies with the arrows; the game doesn't see them
                         if (!e.key.repeat) {
                             int code = flashKeyCode(e.key.keysym.sym);
                             if (code) player->keyDown(code, flashAscii(e.key.keysym));
