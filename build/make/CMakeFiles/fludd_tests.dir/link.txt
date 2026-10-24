@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/fludd_tests.dir/link.d CMakeFiles/fludd_tests.dir/native/tests/fludd_tests.cpp.o -o fludd_tests  libsm63_physics.a

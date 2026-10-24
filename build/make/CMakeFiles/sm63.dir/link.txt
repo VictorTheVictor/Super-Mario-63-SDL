@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/sm63.dir/link.d CMakeFiles/sm63.dir/native/src/main.cpp.o -o sm63  /usr/lib/libSDL3.so.0.4.18 libsm63_physics.a

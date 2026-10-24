@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/audio_tests.dir/link.d CMakeFiles/audio_tests.dir/native/tests/audio_tests.cpp.o -o audio_tests  /usr/lib/libSDL3.so.0.4.18

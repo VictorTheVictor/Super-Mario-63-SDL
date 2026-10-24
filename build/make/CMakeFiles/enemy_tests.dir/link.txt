@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/enemy_tests.dir/link.d CMakeFiles/enemy_tests.dir/native/tests/enemy_tests.cpp.o -o enemy_tests  libsm63_physics.a

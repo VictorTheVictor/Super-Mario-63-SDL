@@ -1,2 +1,0 @@
-/usr/bin/ar qc libsm63_physics.a CMakeFiles/sm63_physics.dir/native/src/physics.cpp.o CMakeFiles/sm63_physics.dir/native/src/enemies.cpp.o CMakeFiles/sm63_physics.dir/native/src/items.cpp.o
-/usr/bin/ranlib libsm63_physics.a

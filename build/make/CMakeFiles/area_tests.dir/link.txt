@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/area_tests.dir/link.d CMakeFiles/area_tests.dir/native/tests/area_tests.cpp.o -o area_tests  libsm63_physics.a
