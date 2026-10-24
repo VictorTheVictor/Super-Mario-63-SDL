@@ -35,6 +35,7 @@
 #include "as/Player.h"
 #include "flash/DisplayObject.h"
 #include "game/Scripts.h"
+#include "EmbeddedFonts.h"
 #include "MissingSwfImage.h"
 #include "flash/Effects.h"
 #include "flash/Raster.h"
@@ -214,10 +215,16 @@ void printTree(FILE* out, flash::DisplayObject& d, int depth, int maxDepth) {
 }
 
 // Pause menu (Esc / controller Start) helpers. The menu is the game's own SaveMessage
-// prompt (shown after collecting a star) with its two buttons rewired: these replace its
-// SAVE/NOSAVE functions and only record the choice; the window loop acts on it.
+// prompt (shown after collecting a star) plus the high score screen's "Save & Exit"
+// button, laid out like that screen's three buttons. These replace the prompt's SAVE,
+// NOSAVE and SAVEXIT functions and only record the choice; the window loop acts on it.
 as::Value pauseMenuSave(const as::Value& self, as::Args) {
     as::setMember(self, as::intern("portAction"), as::Value(std::string("save")));
+    return as::Value();
+}
+
+as::Value pauseMenuSaveExit(const as::Value& self, as::Args) {
+    as::setMember(self, as::intern("portAction"), as::Value(std::string("saveexit")));
     return as::Value();
 }
 
@@ -635,6 +642,7 @@ int main(int argc, char** argv) {
         else if (a == "--check-exports") checkExports = true;
     }
 
+    registerEmbeddedFonts();
     Movie movie;
     std::string err;
     Uint32 t0 = SDL_GetTicks();
@@ -773,15 +781,49 @@ int main(int argc, char** argv) {
                                             "sky extended by a mirrored copy on the right, centered",
                                             "sky zoomed to fill", "sky stretched to fill", "sky as is, black beyond"};
     int viewMode = Letterbox;
+    // Objects shown differently from where the game put them (displayTransform): HUD
+    // pieces at the window's edges, the screen filter stretched over the whole window.
+    std::vector<std::weak_ptr<flash::DisplayObject>> adjusted;
     auto applyView = [&]() {
         if (!player) return;
         player->hiddenObjects.clear();
         player->backdrop = nullptr;
         player->backdropPlacements.clear();
+        for (auto& w : adjusted)
+            if (auto d = w.lock()) d->displayTransform = {};
+        adjusted.clear();
+        player->blackBeyondStage = false;
         if (viewMode == Letterbox || viewScale <= 0) return;
+        // Door and course transitions (the star wipe and others) cover only the stage: show
+        // them letterboxed.
+        auto* transition = as::resolvePath(&player->root(), "_root.Transition");
+        player->blackBeyondStage = transition && transition->visible;
+        // The window in stage pixels.
+        double wx0 = -viewX / viewScale, wy0 = -viewY / viewScale;
+        double ww = surf.width / viewScale, wh = surf.height / viewScale;
         if (auto* stats = dynamic_cast<MovieClip*>(as::resolvePath(&player->root(), "_root.Stats")))
             stats->forEachChild([&](flash::DisplayObject& c) {
-                if (c.definition() && c.definition()->id == 799) player->hiddenObjects.push_back(&c);
+                int id = c.definition() ? c.definition()->id : 0;
+                if (id == 799) player->hiddenObjects.push_back(&c);
+                // The screen filter (a flat stage-sized black overlay that darkens the castle
+                // until enough stars are collected, and fades for effects) stretches from the
+                // stage to the whole window.
+                if (id == 85) {
+                    flash::Matrix toWindow = flash::Matrix::translate(wx0 * 20, wy0 * 20) * flash::Matrix::scale(ww / W, wh / H);
+                    flash::Matrix parent = stats->worldMatrix();
+                    c.displayTransform = parent.inverse() * toWindow * parent;
+                    adjusted.push_back(c.weak_from_this());
+                    return;
+                }
+                // The counters, icons, hint line and quality/fps box move to the nearer window
+                // edge; the power meter, message boxes and pictures stay centered.
+                static const std::set<int> sides = {17, 160, 180, 188, 189, 190, 191, 192, 193,
+                                                    196, 197, 198, 232, 237, 621, 797};
+                if (!sides.count(id)) return;
+                flash::Rect b = c.worldMatrix().apply(c.localBounds());
+                bool left = (b.xMin + b.xMax) / 2 < W * 10;  // center left of the stage's middle
+                c.displayTransform = flash::Matrix::translate(left ? wx0 * 20 : (wx0 + ww - W) * 20, 0);
+                adjusted.push_back(c.weak_from_this());
             });
         player->root().forEachChild([&](flash::DisplayObject& c) {
             if (c.definition() && c.definition()->id == 2102) player->hiddenObjects.push_back(&c);
@@ -791,9 +833,6 @@ int main(int argc, char** argv) {
         flash::Rect b = sky->worldMatrix().apply(sky->localBounds());
         double x0 = b.xMin / 20, y0 = b.yMin / 20, bw = (b.xMax - b.xMin) / 20, bh = (b.yMax - b.yMin) / 20;
         if (bw < 1 || bh < 1) return;
-        // The window in stage pixels.
-        double wx0 = -viewX / viewScale, wy0 = -viewY / viewScale;
-        double ww = surf.width / viewScale, wh = surf.height / viewScale;
         player->backdrop = sky;
         auto& out = player->backdropPlacements;
         if (viewMode == SkyRepeat || viewMode == SkyMirror) {
@@ -870,8 +909,8 @@ int main(int argc, char** argv) {
     };
 
     // Pause menu: Esc or controller Start in a level (not on the title or menus) pauses
-    // the game and its sound and shows the star save prompt with "Save" and "Quit"
-    // actions (its text artwork is hidden until there is artwork for these words).
+    // the game and its sound and shows three buttons: Save (and resume), Save & Exit, and
+    // Don't Save (exits without saving).
     std::weak_ptr<flash::DisplayObject> pauseMenu;
     bool pauseMenuClosing = false;
     bool quitRequested = false;  // the menu's Quit
@@ -901,6 +940,10 @@ int main(int argc, char** argv) {
         flash::DisplayObject* d = as::displayOf(menu);
         if (!d) return true;
         as::setMember(root, as::intern("PauseGame"), true);
+        // The third button: the high score screen's green "Save & Exit" (not exported, so
+        // attached by character), which calls _parent.SAVEXIT().
+        if (auto* mc = dynamic_cast<MovieClip*>(d); mc && movie.character(7506))
+            mc->attach(movie.character(7506), 17 - as::kDepthOffset, "3");
         pauseMenu = d->shared_from_this();
         pauseMenuClosing = false;
         return true;
@@ -920,18 +963,33 @@ int main(int argc, char** argv) {
             if (f && f->native != fn) as::setMember(m, as::intern(name), as::Value(as::Runtime::get().newNative(fn, name)));
         };
         rewire("SAVE", pauseMenuSave);
+        rewire("SAVEXIT", pauseMenuSaveExit);
         rewire("NOSAVE", pauseMenuQuit);
-        for (const char* option : {"1", "2"}) {
-            as::Value txt = as::getMember(as::getMember(m, as::intern(option)), as::intern("txt"));
-            if (txt.isObject()) as::setMember(txt, as::intern("_visible"), false);
+        // Once the prompt's intro animation has placed its buttons: the high score screen's
+        // spacing, in this order: Save, Save & Exit, Don't Save (at the same height).
+        auto* menuClip = dynamic_cast<MovieClip*>(menu.get());
+        as::Value first = as::getMember(m, as::intern("1"));
+        if (menuClip && menuClip->currentFrame() == menuClip->totalFrames() && first.isObject()) {
+            double y = as::getMember(first, as::intern("_y")).toNumber();
+            for (auto [option, x] : {std::pair{"1", -145.5}, {"3", -2.8}, {"2", 143.2}}) {
+                as::Value button = as::getMember(m, as::intern(option));
+                if (!button.isObject()) continue;
+                if (as::getMember(button, as::intern("_x")).toNumber() != x) as::setMember(button, as::intern("_x"), x);
+                if (as::getMember(button, as::intern("_y")).toNumber() != y) as::setMember(button, as::intern("_y"), y);
+            }
         }
         std::string action = as::getMember(m, as::intern("portAction")).toString();
-        if (action == "save") {
+        if (action == "save" || action == "saveexit") {
             as::setMember(m, as::intern("portAction"), as::Value());
             as::Value root = rootValue();
             as::callFunction(as::getMember(root, as::intern("SaveFile")), root, {});
-            std::printf("pause menu: saved\n");
-            if (!pauseMenuClosing) closePauseMenu(*menu);
+            if (action == "saveexit") {
+                std::printf("pause menu: saved, quitting\n");
+                quitRequested = true;
+            } else {
+                std::printf("pause menu: saved\n");
+                if (!pauseMenuClosing) closePauseMenu(*menu);
+            }
         } else if (action == "quit") {
             as::setMember(m, as::intern("portAction"), as::Value());
             std::printf("pause menu: quit\n");
@@ -1232,12 +1290,15 @@ int main(int argc, char** argv) {
     // Each frame the held keys are compared with the last frame and only changes are sent.
     std::set<int> padKeys;
 
-    // Links open with the OS's default handler; the cursor turns into a hand over
-    // clickable things, as in Flash.
+    // Links (the loading screen's Newgrounds banner, the Runouw intro) open with the OS's
+    // default handler on desktops; on phones a tap on them would leave the game, so they
+    // do nothing there. The cursor turns into a hand over clickable things, as in Flash.
+#ifndef __ANDROID__
     as::host().openUrl = [](const std::string& url) {
         std::printf("opening %s\n", url.c_str());
         if (SDL_OpenURL(url.c_str()) != 0) std::fprintf(stderr, "could not open %s: %s\n", url.c_str(), SDL_GetError());
     };
+#endif
     SDL_Cursor* arrowCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
     SDL_Cursor* handCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
     bool showingHand = false;

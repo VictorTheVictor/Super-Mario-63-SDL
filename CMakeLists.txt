@@ -52,6 +52,7 @@ add_library(flash STATIC
     src/flash/Jpeg.cpp
     src/flash/Morph.cpp
     src/flash/Text.cpp
+    src/flash/TrueType.cpp
     src/flash/Effects.cpp
     src/flash/WorkerPool.cpp
     src/flash/Swf.cpp
@@ -113,15 +114,32 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(game PRIVATE -Wno-unused-value -Wno-unused-variable)
 endif()
 
+# Comic Sans MS for text the SWF's embedded fonts can't draw (the star names), compiled
+# in when fonts/COMIC.TTF exists. It is Microsoft's font: keep it out of the repository.
+set(SM63_COMIC_TTF "${CMAKE_CURRENT_SOURCE_DIR}/fonts/COMIC.TTF" CACHE FILEPATH "Comic Sans MS to embed (optional)")
+set(SM63_FONTS_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/embedded_fonts.cpp")
+set(SM63_FONT_DEPENDS)
+if(EXISTS "${SM63_COMIC_TTF}")
+    set(SM63_FONT_DEPENDS "${SM63_COMIC_TTF}")
+    message(STATUS "Embedding ${SM63_COMIC_TTF}")
+endif()
+add_custom_command(OUTPUT "${SM63_FONTS_CPP}"
+    COMMAND ${CMAKE_COMMAND} -DCOMIC_TTF=${SM63_COMIC_TTF} -DOUT=${SM63_FONTS_CPP}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fonts.cmake
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fonts.cmake ${SM63_FONT_DEPENDS})
+add_library(embedded_fonts STATIC "${SM63_FONTS_CPP}")
+target_include_directories(embedded_fonts PRIVATE src)
+target_link_libraries(embedded_fonts PRIVATE flash)
+
 if(ANDROID)
     # SDL's Java activity loads libSDL2.so, then libmain.so, and calls its SDL_main.
     add_library(main SHARED src/main.cpp)
-    target_link_libraries(main PRIVATE game ${SM63_SDL_LIBS})
+    target_link_libraries(main PRIVATE game embedded_fonts ${SM63_SDL_LIBS})
     return()  # the desktop tools and tests below are not built for Android
 endif()
 
 add_executable(sm63 src/main.cpp)
-target_link_libraries(sm63 PRIVATE game ${SM63_SDL_LIBS})
+target_link_libraries(sm63 PRIVATE game embedded_fonts ${SM63_SDL_LIBS})
 if(SM63_SDL_SOURCE AND NOT WIN32)
     # Portable Linux release: SDL2 is linked in, and so is the C++ runtime (testers'
     # distributions may have an older libstdc++); only glibc comes from the system.

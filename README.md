@@ -78,10 +78,9 @@ the SWF onto the executable passes it as the path too.
 
 Symbol viewer keys: Space play/pause, Left/Right step a frame, Escape quit.
 Game mode: input goes to the game; Shift+Escape quits. In a level, Escape (or a
-controller's Start button) pauses the game and its sound and opens a menu built from the
-star save prompt: the first option saves and resumes, the second quits the game; Escape
-again resumes. Its option text artwork is hidden for now (the prompt's "Save & Continue" /
-"Don't Save" words are vector shapes, not text). F11 toggles fullscreen. F5 cycles
+controller's Start button) pauses the game and its sound and opens a menu with the
+high score screen's three buttons: Save (saves and resumes), Save & Exit, and Don't Save
+(quits without saving); Escape again resumes. F11 toggles fullscreen. F5 cycles
 how the window is filled:
 
 1. letterboxed (only the stage, black bars);
@@ -94,10 +93,19 @@ how the window is filled:
 8. sky as is, black beyond it;
 
 then back to 1. Modes 2–8 fill the window and show what lies beyond the stage edges; they
-hide the HUD's 25% black frame around the stage and the black rectangle behind it. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F6 toggles
+hide the HUD's 25% black frame around the stage and the black rectangle behind it, move
+the HUD's counters, hint line and quality box to the window's edges, stretch the screen's
+dark overlay (the castle before enough stars) over the whole window, and show door and
+course transitions letterboxed. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F6 toggles
 smooth motion. The game's fps counter shows the frames actually drawn per second.
-Links (the Runouw and Newgrounds banners) open in the default browser, and the cursor
-turns into a hand over anything clickable.
+Links (the Runouw and Newgrounds banners) open in the default browser (not on Android),
+and the cursor turns into a hand over anything clickable.
+
+Text the SWF's embedded fonts can't fully draw (they often hold only the letters of a
+field's initial text, e.g. the star names' "Star Name" Comic Sans) is drawn in another
+font: Comic Sans MS when the build embeds it, else the game's Arial. Comic Sans is
+Microsoft's and not in this repository: put your own `COMIC.TTF` in `fonts/` (ignored by
+git) before building and CMake compiles it into the executable.
 
 Game controllers (SDL GameController, e.g. Xbox layout): D-pad or left stick moves, A jumps,
 B uses FLUDD, X spins, Y ground pounds and talks (Z), the bumpers also press Z. They press

@@ -12,6 +12,7 @@
 #include "as/Player.h"
 #include "flash/Raster.h"
 #include "flash/Swf.h"
+#include "flash/Text.h"
 
 using namespace as;
 
@@ -294,6 +295,17 @@ int main(int argc, char** argv) {
     CHECK(root["booted"] == true);
     CHECK(again["marker"] == 7);
     CHECK(root["log"][0] == "load");
+
+    // The star name field's embedded Comic Sans holds only "Star Name"; other names are
+    // drawn in a complete embedded font instead of losing most of their letters.
+    if (auto* c = movie.character(9629); c && c->kind == flash::Character::EditText) {
+        flash::TextField field(movie, static_cast<flash::EditTextCharacter*>(c));
+        field.setText("Star Name");
+        double placeholder = field.textExtent().xMax - field.textExtent().xMin;
+        field.setText("Battle with King Bob-omb");
+        double name = field.textExtent().xMax - field.textExtent().xMin;
+        CHECK(placeholder > 0 && name > 2 * placeholder);
+    }
 
     std::printf("%d/%d checks passed (symbol %s)\n", checks - failures, checks, g_symbol.c_str());
     return failures ? 1 : 0;

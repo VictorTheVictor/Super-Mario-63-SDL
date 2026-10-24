@@ -275,9 +275,9 @@ void LayerCache::endFrame() {
 
 Matrix DisplayObject::drawMatrix() const {
     double t = renderSettings.interpolation;
-    if (t >= 1 || !hasPrevMatrix) return matrix;
-    const Matrix& a = prevMatrix;
-    const Matrix& b = matrix;
+    if (t >= 1 || !hasPrevMatrix) return displayMatrix();
+    const Matrix a = displayTransform * prevMatrix;
+    const Matrix b = displayMatrix();
     if (a.a == b.a && a.b == b.b && a.c == b.c && a.d == b.d && a.tx == b.tx && a.ty == b.ty) return b;
     // Jump instead of sweeping through flips (turning around) or across large moves
     // (teleports, camera cuts), which the game shows as instant.

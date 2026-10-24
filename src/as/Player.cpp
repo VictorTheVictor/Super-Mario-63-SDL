@@ -281,6 +281,17 @@ void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolat
         for (const flash::Matrix& bm : backdropMatrices)
             flash::renderDisplayObject(*backdrop, rast, dst, clip, bm, flash::ColorTransform{}, movie_, true);
         flash::renderDisplayObject(*root_, rast, dst, clip, m, flash::ColorTransform{}, movie_);
+        if (blackBeyondStage) {
+            flash::Rect s = movie_.stageRect;
+            int x0 = std::clamp((int)std::lround(originX + s.xMin / 20 * scale), 0, dst.width);
+            int x1 = std::clamp((int)std::lround(originX + s.xMax / 20 * scale), x0, dst.width);
+            int y0 = (int)std::lround(originY + s.yMin / 20 * scale), y1 = (int)std::lround(originY + s.yMax / 20 * scale);
+            for (int y = clip.y0; y < clip.y1; y++) {
+                uint32_t* row = &dst.pixels[(size_t)y * dst.width];
+                if (y < y0 || y >= y1) std::fill(row, row + dst.width, 0xFF000000u);
+                else std::fill(row, row + x0, 0xFF000000u), std::fill(row + x1, row + dst.width, 0xFF000000u);
+            }
+        }
     });
     if (debugOverlay) flash::drawDebugOverlay(*root_, dst, m);
     flash::renderSettings.layerCache = nullptr;
@@ -381,7 +392,7 @@ DisplayObject* Player::pick(DisplayObject& d, const flash::Matrix& m, flash::Poi
         DisplayObject& c = *it->second;
         if (!c.visible || c.clipDepth) continue;
         if (mc->maskBlocks(it->first, m, p)) continue;  // masked away at this point
-        flash::Matrix cm = m * c.matrix;
+        flash::Matrix cm = m * c.displayMatrix();
         if (isInteractive(c)) {
             if (c.hitTest(cm, p)) return &c;
             continue;  // an interactive clip owns its subtree's mouse events

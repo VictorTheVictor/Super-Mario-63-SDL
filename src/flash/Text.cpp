@@ -4,8 +4,10 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 
 #include "flash/Reader.h"
+#include "flash/TrueType.h"
 
 namespace flash {
 
@@ -221,6 +223,17 @@ TextField::TextField(const Movie& movie, EditTextCharacter* def)
     if (def->html) setHtmlText(def->initialText);
     else setText(def->initialText);
 }
+
+namespace {
+
+// Whether the font has a glyph for every character of `text` but spaces and line breaks.
+bool covers(const FontCharacter& font, const std::u32string& text) {
+    for (char32_t c : text)
+        if (c != ' ' && c != '\r' && c != '\n' && c != '\t' && font.glyphIndex(c) < 0) return false;
+    return true;
+}
+
+}  // namespace
 
 const FontCharacter* TextField::findFont(const std::string& face, bool bold, bool italic) const {
     const FontCharacter* nameOnly = nullptr;
@@ -486,19 +499,47 @@ void TextField::layout() {
         int glyph;
         double adv;
     };
+    // Embedded fonts often hold only the characters of the field's initial text (Flash's
+    // automatic embedding), and the game later shows other text in them: the star name
+    // field's Comic Sans has just "Star Name". A run whose font lacks some of its characters
+    // is drawn in another font that has them all: a fallback font of the same name (see
+    // addFallbackFont: Comic Sans when the build embeds it), else an embedded font of the
+    // same weight (Arial).
+    std::deque<Format> substitutes;
+    auto formatFor = [&](const Run& run) -> const Format* {
+        const FontCharacter* font = run.format.font;
+        if (!font || covers(*font, run.text)) return &run.format;
+        const FontCharacter* best = nullptr;
+        int bestScore = -1;
+        auto consider = [&](const FontCharacter* f) {
+            if (f->glyphs.empty() || !covers(*f, run.text)) return;
+            int score = 8 * (f->name == font->name) + 4 * (f->bold == font->bold) + 2 * (f->italic == font->italic) +
+                        (f->name == "Arial");
+            if (score > bestScore) best = f, bestScore = score;
+        };
+        for (auto& f : fallbackFonts()) consider(f.get());
+        for (auto& [id, c] : movie_.characters())
+            if (c->kind == Character::Font) consider(static_cast<const FontCharacter*>(c.get()));
+        if (!best) return &run.format;
+        substitutes.push_back(run.format);
+        substitutes.back().font = best;
+        return &substitutes.back();
+    };
     for (const Paragraph& p : paragraphs_) {
         std::vector<Item> items;
-        const Format* lastFmt = p.runs.empty() ? nullptr : &p.runs.back().format;
-        for (const Run& run : p.runs)
+        const Format* lastFmt = p.runs.empty() ? nullptr : formatFor(p.runs.back());
+        for (const Run& run : p.runs) {
+            const Format* fmt = formatFor(run);
             for (char32_t c : run.text) {
-                const FontCharacter* font = run.format.font;
+                const FontCharacter* font = fmt->font;
                 int g = font ? font->glyphIndex(c) : -1;
-                double s = font ? run.format.size / font->emSize : 0;
+                double s = font ? fmt->size / font->emSize : 0;
                 double adv = 0;
                 if (g >= 0 && g < (int)font->advances.size()) adv = font->advances[g] * s;
-                else if (c == ' ') adv = run.format.size / 4;
-                items.push_back({c, &run.format, g, adv + run.format.letterSpacing});
+                else if (c == ' ') adv = fmt->size / 4;
+                items.push_back({c, fmt, g, adv + fmt->letterSpacing});
             }
+        }
 
         // Break into lines.
         std::vector<std::pair<size_t, size_t>> lines;

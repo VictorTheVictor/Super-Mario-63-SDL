@@ -47,6 +47,8 @@ public:
     std::vector<const flash::DisplayObject*> hiddenObjects;
     flash::DisplayObject* backdrop = nullptr;
     std::vector<flash::Matrix> backdropPlacements;
+    // Paint everything beyond the stage edges black, over the whole frame (letterbox bars).
+    bool blackBeyondStage = false;
     // Render threads, including the caller (default: the machine's hardware threads).
     void setRenderThreads(int n);
     // Keeping filtered layers between frames (on by default; off for comparisons).

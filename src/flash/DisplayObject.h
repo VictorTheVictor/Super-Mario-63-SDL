@@ -75,8 +75,14 @@ public:
     // `matrix` as of the previous game tick (see renderSettings.interpolation).
     Matrix prevMatrix;
     bool hasPrevMatrix = false;
-    // The matrix to draw with: `matrix`, or between the previous tick's and the current
-    // one while rendering an in-between frame.
+    // Port presentation: applied (in parent space, twips) on top of where the game put the
+    // object when drawing it and picking it with the mouse, without scripts seeing the
+    // difference (e.g. HUD pinned to the window edge).
+    Matrix displayTransform;
+    // `matrix` with displayTransform: where the object is shown and picked by the mouse.
+    Matrix displayMatrix() const { return displayTransform * matrix; }
+    // The matrix to draw with: displayMatrix(), or between the previous tick's and the
+    // current one while rendering an in-between frame.
     Matrix drawMatrix() const;
     ColorTransform cxform;
     uint16_t ratio = 0;
