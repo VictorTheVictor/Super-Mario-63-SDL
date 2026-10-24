@@ -42,6 +42,11 @@ Needs MinGW-w64 (Arch: `mingw-w64-gcc`) and the SDL2 2.32.10 source (see android
 This writes `dist/sm63-win32.zip` and `dist/sm63-win64.zip`, each with `sm63/sm63.exe`
 (SDL2 and the C++ runtime linked in; no DLLs needed) and the SWF if one was given.
 
+The executables link the system `msvcrt.dll` (present since Windows XP) instead of the
+Universal CRT that current MinGW-w64 builds default to (Vista and later).
+`scripts/check-xp-imports.py dist-exe` statically checks that an exe imports no DLL or
+known function that Windows XP lacks; it cannot replace a test on a real XP machine.
+
 ## Run
 
 Without a path, the game loads `Super_Mario_63_2010.swf` from the executable's folder,

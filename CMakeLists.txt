@@ -115,7 +115,9 @@ add_executable(sm63 src/main.cpp)
 target_link_libraries(sm63 PRIVATE game ${SM63_SDL_LIBS})
 if(MINGW)
     # One self-contained exe: no libstdc++/libgcc/winpthread DLLs, and no console window.
-    target_link_options(sm63 PRIVATE -static -mwindows)
+    # msvcrt-os: the system msvcrt.dll every Windows since XP has, not the Universal CRT
+    # (api-ms-win-crt-*.dll, Vista and later) that current MinGW-w64 builds default to.
+    target_link_options(sm63 PRIVATE -static -mwindows -mcrtdll=msvcrt-os)
 endif()
 
 add_executable(jpeg_check tests/jpeg_check.cpp)
