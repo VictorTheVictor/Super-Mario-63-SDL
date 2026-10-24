@@ -121,10 +121,14 @@ endif()
 set(SM63_FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/fonts" CACHE PATH "TrueType fonts to embed (optional)")
 set(SM63_FONTS_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/embedded_fonts.cpp")
 file(GLOB SM63_FONT_FILES CONFIGURE_DEPENDS "${SM63_FONT_DIR}/*.ttf" "${SM63_FONT_DIR}/*.TTF")
+# Rewritten only when the set of fonts changes: fonts copied in keep old timestamps, so
+# their own times can't tell the build that something was added or removed.
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/font_list.txt" CONTENT "${SM63_FONT_FILES}\n")
 add_custom_command(OUTPUT "${SM63_FONTS_CPP}"
     COMMAND ${CMAKE_COMMAND} -DFONT_DIR=${SM63_FONT_DIR} -DOUT=${SM63_FONTS_CPP}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fonts.cmake
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fonts.cmake ${SM63_FONT_FILES})
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fonts.cmake ${SM63_FONT_FILES}
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/font_list.txt")
 add_library(embedded_fonts STATIC "${SM63_FONTS_CPP}")
 target_include_directories(embedded_fonts PRIVATE src)
 target_link_libraries(embedded_fonts PRIVATE flash)

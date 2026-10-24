@@ -108,7 +108,10 @@ fields use Arial (bold for signs and messages, which lack J, Q, q, ";" and '"'; 
 italic for the music info) and Comic Sans MS bold (the star names). These are Microsoft's
 fonts and not in this repository: put your own `arialbd.ttf`, `arial.ttf`, `ariali.ttf`,
 `comicbd.ttf` and/or `comic.ttf` in `fonts/` (ignored by git) and CMake compiles them into
-the executable.
+the executable. From a Windows 7 ISO, for example:
+
+    7z e win7.iso sources/install.wim
+    7z e -ofonts install.wim 1/Windows/Fonts/{arial,arialbd,ariali,comic,comicbd}.ttf
 
 Game controllers (SDL GameController, e.g. Xbox layout): D-pad or left stick moves, A jumps,
 B uses FLUDD, X spins, Y ground pounds and talks (Z), the bumpers also press Z. They press
