@@ -118,3 +118,7 @@ target_link_libraries(missing_bitmaps PRIVATE flash)
 
 add_executable(text_bounds tests/text_bounds.cpp)
 target_link_libraries(text_bounds PRIVATE flash)
+
+# Regenerates src/MissingSwfImage.h (the "SWF not found" screen) from the game's sign font.
+add_executable(missing_swf_image tools/missing_swf_image.cpp)
+target_link_libraries(missing_swf_image PRIVATE flash)

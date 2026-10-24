@@ -175,4 +175,8 @@ void drawGlyph(Rasterizer& r, Surface& dst, const IntRect& clip, const ShapeDef&
 std::u32string utf8Decode(const std::string& s);
 std::string utf8Encode(const std::u32string& s);
 
+// Draws one font glyph (glyph units mapped to device pixels by `m`) in a solid color.
+void drawGlyph(Rasterizer& r, Surface& dst, const IntRect& clip, const ShapeDef& glyph, const Matrix& m,
+               Color color, const ColorTransform& cx);
+
 }  // namespace flash

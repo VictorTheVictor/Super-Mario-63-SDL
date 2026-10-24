@@ -35,6 +35,11 @@ Requires a C++17 compiler, CMake and SDL2. `third_party/minimp3` (CC0) is vendor
 
 ## Run
 
+Without a path, the game loads `Super_Mario_63_2010.swf` from the executable's folder,
+so a release is just the executable next to the SWF. If it is missing, the window says
+so (in the game's sign font) and starts the game when the SWF is dropped on it; dropping
+the SWF onto the executable passes it as the path too.
+
     ./build/sm63 path/to/Super_Mario_63_2010.swf                  # game mode (script Player)
     ./build/sm63 path/to/Super_Mario_63_2010.swf --symbol NAME    # one exported symbol
     ./build/sm63 path/to/Super_Mario_63_2010.swf --stats          # SWF contents summary

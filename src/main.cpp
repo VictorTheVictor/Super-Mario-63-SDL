@@ -35,6 +35,7 @@
 #include "as/Player.h"
 #include "flash/DisplayObject.h"
 #include "game/Scripts.h"
+#include "MissingSwfImage.h"
 #include "flash/Effects.h"
 #include "flash/Raster.h"
 #include "flash/Swf.h"
@@ -236,6 +237,67 @@ as::Value pauseMenuFade(const as::Value& self, as::Args) {
         as::callFunction(as::getMember(self, as::intern("removeMovieClip")), self, {});
     }
     return as::Value();
+}
+
+// Reads a whole file through SDL, so the same code opens a file on disk or an Android
+// APK asset. Empty if it cannot be read.
+std::vector<uint8_t> readFile(const std::string& path) {
+    std::vector<uint8_t> bytes;
+    if (SDL_RWops* rw = SDL_RWFromFile(path.c_str(), "rb")) {
+        Sint64 size = SDL_RWsize(rw);
+        if (size > 0) {
+            bytes.resize((size_t)size);
+            bytes.resize(SDL_RWread(rw, bytes.data(), 1, bytes.size()));
+        }
+        SDL_RWclose(rw);
+    }
+    return bytes;
+}
+
+// Shows the "SWF not found" message (pre-rendered in the game's sign font) until the user
+// drops a file on the window. Returns the dropped path, or "" if the window was closed.
+std::string waitForSwfDrop(int scale) {
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) return "";
+    SDL_Window* win = SDL_CreateWindow("Super Mario 63", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                       450 * scale, 300 * scale, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    SDL_Renderer* ren = win ? SDL_CreateRenderer(win, -1, SDL_RENDERER_PRESENTVSYNC) : nullptr;
+    if (!ren) return "";
+    // Decode the run-length encoded gray+alpha image into a texture.
+    std::vector<uint32_t> argb;
+    argb.reserve((size_t)missing_swf::kWidth * missing_swf::kHeight);
+    for (size_t i = 0; i + 2 < sizeof missing_swf::kRle; i += 3) {
+        uint32_t g = missing_swf::kRle[i + 1], a = missing_swf::kRle[i + 2];
+        argb.insert(argb.end(), missing_swf::kRle[i] + 1u, a << 24 | g << 16 | g << 8 | g);
+    }
+    SDL_Texture* tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
+                                         missing_swf::kWidth, missing_swf::kHeight);
+    SDL_UpdateTexture(tex, nullptr, argb.data(), missing_swf::kWidth * 4);
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
+    std::string dropped;
+    for (bool open = true; open && dropped.empty();) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_QUIT) open = false;
+            if (e.type == SDL_DROPFILE) {
+                dropped = e.drop.file;
+                SDL_free(e.drop.file);
+            }
+        }
+        int ow, oh;
+        SDL_GetRendererOutputSize(ren, &ow, &oh);
+        double k = std::min(ow * 0.92 / missing_swf::kWidth, (double)oh / missing_swf::kHeight);
+        SDL_Rect dst{(int)(ow - missing_swf::kWidth * k) / 2, (int)(oh - missing_swf::kHeight * k) / 2,
+                     (int)(missing_swf::kWidth * k), (int)(missing_swf::kHeight * k)};
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        SDL_RenderClear(ren);
+        SDL_RenderCopy(ren, tex, nullptr, &dst);
+        SDL_RenderPresent(ren);
+    }
+    SDL_DestroyTexture(tex);
+    SDL_DestroyRenderer(ren);
+    SDL_DestroyWindow(win);
+    return dropped;
 }
 
 bool saveBmp(const Surface& s, const char* path) {
@@ -501,14 +563,26 @@ int main(int argc, char** argv) {
     }
     if (const char* dir = SDL_AndroidGetInternalStoragePath()) as::setSaveDirectory(dir);
 #endif
-    if (argc < 2) {
-        std::fprintf(stderr,
-                     "usage: %s <game.swf> [--symbol NAME] [--scale N] [--frames N --screenshot "
-                     "out.bmp [--render-scale X]] [--smooth] [--threads N] [--stats]\n       %s --selftest out.bmp\n",
-                     argv[0], argv[0]);
-        return 1;
+    if (argc >= 2 && (!std::strcmp(argv[1], "--help") || !std::strcmp(argv[1], "-h"))) {
+        std::printf("usage: %s [game.swf] [--symbol NAME] [--scale N] [--frames N --screenshot "
+                    "out.bmp [--render-scale X]] [--smooth] [--threads N] [--stats]\n       %s --selftest out.bmp\n"
+                    "Without a path, Super_Mario_63_2010.swf next to the executable is used.\n",
+                    argv[0], argv[0]);
+        return 0;
     }
-    std::string swfPath = argv[1], symbol, screenshot, watch, inputSpec, calls, courseSpec, treePath, probes,
+    // The SWF: the first argument (also what dropping a file onto the executable passes),
+    // or Super_Mario_63_2010.swf next to the executable, as in a release zip.
+    int firstOption = 2;
+    std::string swfPath;
+    if (argc >= 2 && std::strncmp(argv[1], "--", 2) != 0) {
+        swfPath = argv[1];
+    } else {
+        firstOption = 1;
+        char* base = SDL_GetBasePath();
+        swfPath = std::string(base ? base : "") + "Super_Mario_63_2010.swf";
+        SDL_free(base);
+    }
+    std::string symbol, screenshot, watch, inputSpec, calls, courseSpec, treePath, probes,
                 gotoSpec, trackSpec, setSpec, findText;
     int scale = 2, frames = 0, sampleEvery = 0, benchFrom = 0;
     double renderScale = 1;  // headless output size, in multiples of the stage size
@@ -521,7 +595,7 @@ int main(int argc, char** argv) {
     std::string profilePath;  // --profile: sample stacks from --bench-from on
     bool stats = false, checkExports = false, mute = false, dump = false, traces = false,
          diagnose = false, bench = false;
-    for (int i = 2; i < argc; i++) {
+    for (int i = firstOption; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--symbol" && i + 1 < argc) symbol = argv[++i];
         else if (a == "--scale" && i + 1 < argc) scale = std::max(1, std::atoi(argv[++i]));
@@ -561,15 +635,15 @@ int main(int argc, char** argv) {
     Movie movie;
     std::string err;
     Uint32 t0 = SDL_GetTicks();
-    // Read through SDL so the same code opens a file on disk or an Android APK asset.
-    std::vector<uint8_t> swfBytes;
-    if (SDL_RWops* rw = SDL_RWFromFile(swfPath.c_str(), "rb")) {
-        Sint64 size = SDL_RWsize(rw);
-        if (size > 0) {
-            swfBytes.resize((size_t)size);
-            swfBytes.resize(SDL_RWread(rw, swfBytes.data(), 1, swfBytes.size()));
-        }
-        SDL_RWclose(rw);
+    std::vector<uint8_t> swfBytes = readFile(swfPath);
+    bool headless = !screenshot.empty() || dump || bench || diagnose || stats || checkExports;
+    // In a window, a missing SWF shows a message until one is dropped on it.
+    while (swfBytes.empty() && !headless) {
+        std::fprintf(stderr, "cannot open %s\n", swfPath.c_str());
+        std::string dropped = waitForSwfDrop(scale);
+        if (dropped.empty()) return 1;  // window closed
+        swfPath = dropped;
+        swfBytes = readFile(swfPath);
     }
     if (swfBytes.empty()) err = "cannot open " + swfPath;
     if (swfBytes.empty() || !movie.loadFromMemory(std::move(swfBytes), err)) {
