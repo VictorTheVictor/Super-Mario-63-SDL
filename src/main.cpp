@@ -1025,9 +1025,14 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
+    Uint32 windowFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+#ifdef __ANDROID__
+    // Full screen: SDL then puts the activity in immersive mode (status and navigation
+    // bars hidden).
+    windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+#endif
     SDL_Window* win = SDL_CreateWindow("Super Mario 63", SDL_WINDOWPOS_CENTERED,
-                                       SDL_WINDOWPOS_CENTERED, W * scale, H * scale,
-                                       SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+                                       SDL_WINDOWPOS_CENTERED, W * scale, H * scale, windowFlags);
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_PRESENTVSYNC);
     SDL_RenderSetLogicalSize(ren, W, H);  // letterboxes, and maps mouse events to stage pixels
     SDL_Texture* tex = nullptr;
