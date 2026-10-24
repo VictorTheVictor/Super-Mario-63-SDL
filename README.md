@@ -33,6 +33,15 @@ Requires a C++17 compiler, CMake and SDL2. `third_party/minimp3` (CC0) is vendor
     cmake -S . -B build -G Ninja
     ninja -C build
 
+### Windows (cross-compiled, Windows XP and newer, 32- and 64-bit)
+
+Needs MinGW-w64 (Arch: `mingw-w64-gcc`) and the SDL2 2.32.10 source (see android/README.md):
+
+    scripts/build-windows.sh path/to/SDL2-2.32.10 [path/to/Super_Mario_63_2010.swf]
+
+This writes `dist/sm63-win32.zip` and `dist/sm63-win64.zip`, each with `sm63/sm63.exe`
+(SDL2 and the C++ runtime linked in; no DLLs needed) and the SWF if one was given.
+
 ## Run
 
 Without a path, the game loads `Super_Mario_63_2010.swf` from the executable's folder,

@@ -725,10 +725,20 @@ int main(int argc, char** argv) {
         viewed = dynamic_cast<MovieClip*>(obj.get());
     } else {
         // _url as Flash Player reports it: the SWF's own file URL.
+#ifdef _WIN32
+        if (char* abs = _fullpath(nullptr, swfPath.c_str(), 0)) {
+            std::string path = abs;
+            for (char& c : path)
+                if (c == '\\') c = '/';
+            as::stage().url = "file:///" + path;
+            std::free(abs);
+        }
+#else
         if (char* abs = realpath(swfPath.c_str(), nullptr)) {
             as::stage().url = std::string("file://") + abs;
             std::free(abs);
         }
+#endif
         // Like the standalone Flash Player, trace() prints nothing unless asked.
         if (!traces) as::Runtime::get().traceOutput = [](const std::string&) {};
         as::diagnostics().enabled = diagnose;

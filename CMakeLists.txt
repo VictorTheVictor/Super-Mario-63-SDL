@@ -9,8 +9,27 @@ endif()
 
 # On Android the app's build (android/app/jni/CMakeLists.txt) builds SDL2 from source
 # first and includes this project, which then produces libmain.so instead of programs.
-if(NOT ANDROID)
+# SM63_SDL_SOURCE: build SDL2 from a source release and link it statically (Windows
+# release builds); otherwise the system's SDL2 is used.
+set(SM63_SDL_SOURCE "" CACHE PATH "SDL2 source directory to build and link statically")
+if(ANDROID)
+    set(SM63_SDL_LIBS SDL2::SDL2)
+elseif(SM63_SDL_SOURCE)
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${SM63_SDL_SOURCE} SDL2 EXCLUDE_FROM_ALL)
+    set(SM63_SDL_LIBS SDL2::SDL2main SDL2::SDL2-static)
+else()
     find_package(SDL2 REQUIRED)
+    set(SM63_SDL_LIBS SDL2::SDL2)
+    if(WIN32 AND TARGET SDL2::SDL2main)
+        set(SM63_SDL_LIBS SDL2::SDL2main SDL2::SDL2)
+    endif()
+endif()
+if(WIN32)
+    # Windows XP and newer (SDL2 itself loads newer Windows functions only when present).
+    add_compile_definitions(_WIN32_WINNT=0x0501 WINVER=0x0501)
 endif()
 find_package(Threads REQUIRED)
 if(ANDROID)
@@ -88,12 +107,16 @@ endif()
 if(ANDROID)
     # SDL's Java activity loads libSDL2.so, then libmain.so, and calls its SDL_main.
     add_library(main SHARED src/main.cpp)
-    target_link_libraries(main PRIVATE game SDL2::SDL2)
+    target_link_libraries(main PRIVATE game ${SM63_SDL_LIBS})
     return()  # the desktop tools and tests below are not built for Android
 endif()
 
 add_executable(sm63 src/main.cpp)
-target_link_libraries(sm63 PRIVATE game SDL2::SDL2)
+target_link_libraries(sm63 PRIVATE game ${SM63_SDL_LIBS})
+if(MINGW)
+    # One self-contained exe: no libstdc++/libgcc/winpthread DLLs, and no console window.
+    target_link_options(sm63 PRIVATE -static -mwindows)
+endif()
 
 add_executable(jpeg_check tests/jpeg_check.cpp)
 target_link_libraries(jpeg_check PRIVATE flash)

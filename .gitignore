@@ -5,3 +5,5 @@ build/
 /hires/
 __pycache__/
 sm63-dump-*
+/build-win-*/
+/dist/
