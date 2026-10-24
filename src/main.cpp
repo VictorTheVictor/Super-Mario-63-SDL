@@ -212,6 +212,32 @@ void printTree(FILE* out, flash::DisplayObject& d, int depth, int maxDepth) {
     if (depth < maxDepth) d.forEachChild([&](flash::DisplayObject& c) { printTree(out, c, depth + 1, maxDepth); });
 }
 
+// Pause menu (Esc / controller Start) helpers. The menu is the game's own SaveMessage
+// prompt (shown after collecting a star) with its two buttons rewired: these replace its
+// SAVE/NOSAVE functions and only record the choice; the window loop acts on it.
+as::Value pauseMenuSave(const as::Value& self, as::Args) {
+    as::setMember(self, as::intern("portAction"), as::Value(std::string("save")));
+    return as::Value();
+}
+
+as::Value pauseMenuQuit(const as::Value& self, as::Args) {
+    as::setMember(self, as::intern("portAction"), as::Value(std::string("quit")));
+    return as::Value();
+}
+
+// The prompt's own closing: fade out over 10 frames, then unpause and remove it.
+as::Value pauseMenuFade(const as::Value& self, as::Args) {
+    double count = as::getMember(self, as::intern("count")).toNumber() + 1;
+    as::setMember(self, as::intern("count"), count);
+    as::setMember(self, as::intern("_alpha"), as::getMember(self, as::intern("_alpha")).toNumber() - 10);
+    if (count >= 10) {
+        as::Value root = as::getMember(as::Value(as::Runtime::get().global), as::intern("_level0"));
+        as::setMember(root, as::intern("PauseGame"), false);
+        as::callFunction(as::getMember(self, as::intern("removeMovieClip")), self, {});
+    }
+    return as::Value();
+}
+
 bool saveBmp(const Surface& s, const char* path) {
     SDL_Surface* out = SDL_CreateRGBSurfaceWithFormatFrom(
         (void*)s.pixels.data(), s.width, s.height, 32, s.width * 4, SDL_PIXELFORMAT_ARGB8888);
@@ -490,6 +516,7 @@ int main(int argc, char** argv) {
     bool noLayerCache = false;
     bool noInterpolation = false;  // --no-smooth-motion: draw only at game ticks
     bool debugOverlay = false;     // --debug-overlay: start with the F3 view on
+    std::string pauseAt;           // --pause-at F1,F2: press Esc (pause menu) at these frames
     double headlessInterpolation = 1;  // --interpolate T: screenshot between the last two ticks
     std::string profilePath;  // --profile: sample stacks from --bench-from on
     bool stats = false, checkExports = false, mute = false, dump = false, traces = false,
@@ -504,6 +531,7 @@ int main(int argc, char** argv) {
         else if (a == "--no-layer-cache") noLayerCache = true;
         else if (a == "--no-smooth-motion") noInterpolation = true;
         else if (a == "--debug-overlay") debugOverlay = true;
+        else if (a == "--pause-at" && i + 1 < argc) pauseAt = argv[++i];
         else if (a == "--interpolate" && i + 1 < argc) headlessInterpolation = std::atof(argv[++i]);
         else if (a == "--profile" && i + 1 < argc) profilePath = argv[++i], bench = true;
         else if (a == "--threads" && i + 1 < argc) renderThreads = std::max(1, std::atoi(argv[++i]));
@@ -691,6 +719,77 @@ int main(int argc, char** argv) {
         player->tick();
         if (noclip) pinChar();
     };
+
+    // Pause menu: Esc or controller Start in a level (not on the title or menus) pauses
+    // the game and its sound and shows the star save prompt with "Save" and "Quit"
+    // actions (its text artwork is hidden until there is artwork for these words).
+    std::weak_ptr<flash::DisplayObject> pauseMenu;
+    bool pauseMenuClosing = false;
+    bool quitRequested = false;  // the menu's Quit
+    auto rootValue = [&]() { return as::valueOf(&player->root()); };
+    auto closePauseMenu = [&](flash::DisplayObject& menu) {
+        as::Value m = as::valueOf(&menu);
+        as::setMember(m, as::intern("clicked"), true);  // its buttons ignore input now
+        as::setMember(m, as::intern("count"), 0);
+        as::setMember(m, as::intern("onEnterFrame"),
+                      as::Value(as::Runtime::get().newNative(pauseMenuFade, "onEnterFrame")));
+        pauseMenuClosing = true;
+    };
+    // Returns false when there is no level to pause (the key then goes to the game).
+    auto togglePauseMenu = [&]() -> bool {
+        if (!player || !as::resolvePath(&player->root(), "_root.Course.Char")) return false;
+        if (auto menu = pauseMenu.lock(); menu && !as::isRemoved(menu.get())) {
+            if (!pauseMenuClosing) closePauseMenu(*menu);
+            return true;
+        }
+        as::Value root = rootValue();
+        if (as::getMember(root, as::intern("PauseGame")).toBoolean()) return true;  // the game's own pause or prompt
+        double depth = as::callFunction(as::getMember(root, as::intern("getNextHighestDepth")), root, {}).toNumber();
+        as::Value init = as::obj({{"_x", as::getMember(root, as::intern("screensizeX")).toNumber() / 2},
+                                  {"_y", as::getMember(root, as::intern("screensizeY")).toNumber() / 2}});
+        as::Value args[4] = {as::Value(std::string("SaveMessage")), as::Value(std::string("PortPauseMenu")), depth, init};
+        as::Value menu = as::callFunction(as::getMember(root, as::intern("attachMovie")), root, as::Args{args, 4});
+        flash::DisplayObject* d = as::displayOf(menu);
+        if (!d) return true;
+        as::setMember(root, as::intern("PauseGame"), true);
+        pauseMenu = d->shared_from_this();
+        pauseMenuClosing = false;
+        return true;
+    };
+    // Each frame while the menu exists: hide the option text, act on a choice, keep the
+    // sound paused until it is gone.
+    auto updatePauseMenu = [&]() {
+        auto menu = pauseMenu.lock();
+        bool open = menu && !as::isRemoved(menu.get());
+        mixer.setPaused(open);
+        if (!open) return;
+        as::Value m = as::valueOf(menu.get());
+        // Its frame 1 script (queued when it was attached) defines SAVE and NOSAVE; replace
+        // them once it has run.
+        auto rewire = [&](const char* name, as::Function::Native fn) {
+            auto* f = dynamic_cast<as::Function*>(as::getMember(m, as::intern(name)).object());
+            if (f && f->native != fn) as::setMember(m, as::intern(name), as::Value(as::Runtime::get().newNative(fn, name)));
+        };
+        rewire("SAVE", pauseMenuSave);
+        rewire("NOSAVE", pauseMenuQuit);
+        for (const char* option : {"1", "2"}) {
+            as::Value txt = as::getMember(as::getMember(m, as::intern(option)), as::intern("txt"));
+            if (txt.isObject()) as::setMember(txt, as::intern("_visible"), false);
+        }
+        std::string action = as::getMember(m, as::intern("portAction")).toString();
+        if (action == "save") {
+            as::setMember(m, as::intern("portAction"), as::Value());
+            as::Value root = rootValue();
+            as::callFunction(as::getMember(root, as::intern("SaveFile")), root, {});
+            std::printf("pause menu: saved\n");
+            if (!pauseMenuClosing) closePauseMenu(*menu);
+        } else if (action == "quit") {
+            as::setMember(m, as::intern("portAction"), as::Value());
+            std::printf("pause menu: quit\n");
+            quitRequested = true;
+        }
+    };
+
     auto reportMissing = [&]() {
         if (player && !player->missingScripts().empty())
             std::printf("%zu frame scripts ran without a ported implementation\n",
@@ -704,6 +803,15 @@ int main(int argc, char** argv) {
 #if defined(__linux__) && !defined(__ANDROID__)
             if (!profilePath.empty() && i == benchFrom) prof::start(profilePath.c_str());
 #endif
+            // --pause-at: the Esc key's pause menu, at the listed frames.
+            for (size_t ps = 0; player && ps < pauseAt.size();) {
+                size_t comma = pauseAt.find(',', ps);
+                if (std::atoi(pauseAt.c_str() + ps) == i)
+                    std::printf("frame %d: pause menu %s\n", i, togglePauseMenu() ? "toggled" : "not available");
+                ps = comma == std::string::npos ? pauseAt.size() : comma + 1;
+            }
+            if (player) updatePauseMenu();
+            if (quitRequested) break;
             if (player)
                 for (const InputEvent& e : events) {
                     if (e.frame != i) continue;
@@ -998,6 +1106,13 @@ int main(int argc, char** argv) {
             if (button(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) || button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))
                 held.insert('Z');
         }
+        static bool startWasDown = false;
+        bool startDown = false;
+        for (int i = 0; i < SDL_NumJoysticks(); i++)
+            if (SDL_GameController* pad = SDL_GameControllerFromInstanceID(SDL_JoystickGetDeviceInstanceID(i)))
+                startDown |= SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_START) != 0;
+        if (startDown && !startWasDown) togglePauseMenu();
+        startWasDown = startDown;
         if (!noclip) {  // in noclip the directions fly Mario instead
             if (padLeft) held.insert(as::keycode::Left);
             if (padRight) held.insert(as::keycode::Right);
@@ -1106,6 +1221,9 @@ int main(int argc, char** argv) {
                     case SDL_KEYDOWN:
                         if (e.key.keysym.sym == SDLK_ESCAPE && (e.key.keysym.mod & KMOD_SHIFT)) running = false;
                         if (e.key.keysym.sym == SDLK_AC_BACK) running = false;  // Android back button
+                        if (e.key.keysym.sym == SDLK_ESCAPE && !(e.key.keysym.mod & KMOD_SHIFT) && !e.key.repeat &&
+                            togglePauseMenu())
+                            break;  // the pause menu, not a key for the game
                         // Port-only shortcuts, not passed to the game.
                         if (e.key.keysym.sym == SDLK_F11 && !e.key.repeat) {
                             bool full = SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP;
@@ -1219,6 +1337,8 @@ int main(int argc, char** argv) {
             }
         }
         if (player) updatePad();
+        if (player) updatePauseMenu();
+        if (quitRequested) running = false;
         updateCursor();
         Uint64 now = SDL_GetPerformanceCounter();
         acc += (now - last) * 1000.0 / SDL_GetPerformanceFrequency();

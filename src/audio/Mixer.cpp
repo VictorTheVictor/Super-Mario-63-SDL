@@ -165,6 +165,10 @@ bool Mixer::fill(Voice& v, size_t needFrames) {
 }
 
 void Mixer::mix(int16_t* out, size_t frames) {
+    if (paused_) {
+        std::fill(out, out + frames * 2, int16_t(0));
+        return;
+    }
     std::lock_guard<std::mutex> lock(mu_);
     scratch_.assign(frames * 2, 0.f);
     for (auto it = voices_.begin(); it != voices_.end();) {

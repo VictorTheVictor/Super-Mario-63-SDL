@@ -47,7 +47,11 @@ Requires a C++17 compiler, CMake and SDL2. `third_party/minimp3` (CC0) is vendor
     ./build/audio_test path/to/Super_Mario_63_2010.swf [sine.mp3] # decoders, mixer, Sound API
 
 Symbol viewer keys: Space play/pause, Left/Right step a frame, Escape quit.
-Game mode: input goes to the game; Shift+Escape quits. F11 toggles fullscreen, F5 toggles
+Game mode: input goes to the game; Shift+Escape quits. In a level, Escape (or a
+controller's Start button) pauses the game and its sound and opens a menu built from the
+star save prompt: the first option saves and resumes, the second quits the game; Escape
+again resumes. Its option text artwork is hidden for now (the prompt's "Save & Continue" /
+"Don't Save" words are vector shapes, not text). F11 toggles fullscreen, F5 toggles
 letterboxing (off: the game fills the window and shows what lies beyond the stage edges),
 F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F6 toggles
 smooth motion. The game's fps counter shows the frames actually drawn per second.

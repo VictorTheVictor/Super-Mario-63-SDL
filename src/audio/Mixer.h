@@ -3,6 +3,7 @@
 // interleaved stereo int16. Platform-independent; the host calls mix() from its
 // audio callback. All public methods are thread-safe.
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -45,6 +46,9 @@ public:
     void stopTag(uint32_t tag, int group = -1);  // group -1 = any
     void stopGroup(int group);
     void stopAll();
+    // While paused, mix() outputs silence and every voice keeps its position.
+    void setPaused(bool paused) { paused_ = paused; }
+    bool paused() const { return paused_; }
     bool isPlaying(VoiceId id) const;
     bool isTagPlaying(uint32_t tag) const;
     double positionMs(VoiceId id) const;
@@ -79,6 +83,7 @@ private:
 
     int outRate_;
     mutable std::mutex mu_;
+    std::atomic<bool> paused_{false};
     std::unordered_map<VoiceId, Voice> voices_;
     std::unordered_map<int, Transform> groups_;
     std::vector<VoiceId> finished_;
