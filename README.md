@@ -47,8 +47,14 @@ Requires a C++17 compiler, CMake and SDL2. `third_party/minimp3` (CC0) is vendor
     ./build/audio_test path/to/Super_Mario_63_2010.swf [sine.mp3] # decoders, mixer, Sound API
 
 Symbol viewer keys: Space play/pause, Left/Right step a frame, Escape quit.
-Game mode: input goes to the game; Shift+Escape quits. F11 toggles fullscreen, F4 toggles
-crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F3 toggles smooth motion.
+Game mode: input goes to the game; Shift+Escape quits. F11 toggles fullscreen, F5 toggles
+letterboxing (off: the game fills the window and shows what lies beyond the stage edges),
+F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F3 toggles
+smooth motion.
+
+Game controllers (SDL GameController, e.g. Xbox layout): D-pad or left stick moves, A jumps,
+B uses FLUDD, X spins, Y ground pounds (Down), the bumpers talk/confirm (Z). They press the
+same keys the game reads from the keyboard (S, C, X, Down, Z and the arrows).
 Debugging: F2 toggles noclip (arrow keys fly Mario through walls, Shift for speed), F9
 writes `sm63-dump-N.txt` (display tree) and `sm63-dump-N.bmp` (frame).
 The window title shows the rendered frames per second.

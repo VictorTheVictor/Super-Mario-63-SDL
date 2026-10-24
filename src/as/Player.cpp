@@ -236,12 +236,16 @@ void Player::tick() {
     rt.maybeCollect();
 }
 
-void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolation) {
+void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolation, double scale,
+                    double originX, double originY) {
     flash::Color bg = movie_.background;
     dst.clear(0xFF000000u | bg.r << 16 | bg.g << 8 | bg.b);
-    // The surface may be larger than the stage: scale everything to fill its width.
-    double stageWidth = (movie_.stageRect.xMax - movie_.stageRect.xMin) / 20;
-    double scale = stageWidth > 0 ? dst.width / stageWidth : 1;
+    if (scale <= 0) {
+        // The surface may be larger than the stage: scale everything to fill its width.
+        double stageWidth = (movie_.stageRect.xMax - movie_.stageRect.xMin) / 20;
+        scale = stageWidth > 0 ? dst.width / stageWidth : 1;
+        originX = originY = 0;
+    }
     flash::renderSettings.scale = scale;
     flash::renderSettings.interpolation = std::clamp(interpolation, 0.0, 1.0);
     flash::prepareForRender(*root_);
@@ -249,7 +253,7 @@ void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolat
     // More bands than threads, so a thread finishing a cheap band takes another.
     int threads = renderPool_->size();
     int bands = threads == 1 ? 1 : std::min(threads * 3, std::max(1, dst.height / 8));
-    flash::Matrix m = flash::Matrix::scale(0.05 * scale, 0.05 * scale);
+    flash::Matrix m = flash::Matrix::translate(originX, originY) * flash::Matrix::scale(0.05 * scale, 0.05 * scale);
     layerCache_.beginFrame(&dst);
     flash::renderSettings.layerCache = layerCaching_ ? &layerCache_ : nullptr;
     if (layerCaching_)

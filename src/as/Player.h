@@ -27,8 +27,11 @@ public:
     void tick();
     // Renders the stage scaled to fill `dst`'s width, split into bands across threads.
     // `interpolation` places moving objects between the previous tick (0) and the
-    // current one (1), for drawing more frames than the game ticks.
-    void render(flash::Rasterizer& r, flash::Surface& dst, double interpolation = 1);
+    // current one (1), for drawing more frames than the game ticks. With `scale` > 0 the
+    // stage is drawn at that many pixels per stage pixel with its top-left corner at
+    // (originX, originY), and content beyond the stage edges shows (no letterboxing).
+    void render(flash::Rasterizer& r, flash::Surface& dst, double interpolation = 1, double scale = 0,
+                double originX = 0, double originY = 0);
     // Render threads, including the caller (default: the machine's hardware threads).
     void setRenderThreads(int n);
     // Keeping filtered layers between frames (on by default; off for comparisons).

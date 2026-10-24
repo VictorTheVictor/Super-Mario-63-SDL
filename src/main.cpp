@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <set>
 #include <vector>
 #include <string>
 
@@ -618,9 +619,10 @@ int main(int argc, char** argv) {
     Rasterizer rast;
     const Color bg = movie.background;
     double interpolation = 1;  // window mode: how far between the last two ticks to draw
+    double viewScale = 0, viewX = 0, viewY = 0;  // window mode: stage placement in `surf`
     auto renderFrame = [&]() {
         if (player) {
-            player->render(rast, surf, interpolation);
+            player->render(rast, surf, interpolation, viewScale, viewX, viewY);
             return;
         }
         surf.clear(0xFF000000u | bg.r << 16 | bg.g << 8 | bg.b);
@@ -634,6 +636,8 @@ int main(int argc, char** argv) {
     // move him. The camera follows him as usual.
     bool noclip = false;
     double noclipX = 0, noclipY = 0;
+    // Directions currently held on a game controller (D-pad or left stick).
+    bool padLeft = false, padRight = false, padUp = false, padDown = false;
     auto charValue = [&]() -> as::Value {
         flash::DisplayObject* c = player ? as::resolvePath(&player->root(), "_root.Course.Char") : nullptr;
         return c ? as::valueOf(c) : as::Value();
@@ -654,8 +658,8 @@ int main(int argc, char** argv) {
         if (noclip) {
             const Uint8* k = SDL_GetKeyboardState(nullptr);
             double speed = (k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT]) ? 24 : 8;
-            noclipX += speed * (k[SDL_SCANCODE_RIGHT] - k[SDL_SCANCODE_LEFT]);
-            noclipY += speed * (k[SDL_SCANCODE_DOWN] - k[SDL_SCANCODE_UP]);
+            noclipX += speed * ((k[SDL_SCANCODE_RIGHT] || padRight) - (k[SDL_SCANCODE_LEFT] || padLeft));
+            noclipY += speed * ((k[SDL_SCANCODE_DOWN] || padDown) - (k[SDL_SCANCODE_UP] || padUp));
             pinChar();
         }
         player->tick();
@@ -883,7 +887,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    if (SDL_Init(SDL_INIT_VIDEO | (player && !mute ? SDL_INIT_AUDIO : 0)) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | (player && !mute ? SDL_INIT_AUDIO : 0)) != 0) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
@@ -893,14 +897,28 @@ int main(int argc, char** argv) {
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_PRESENTVSYNC);
     SDL_RenderSetLogicalSize(ren, W, H);  // letterboxes, and maps mouse events to stage pixels
     SDL_Texture* tex = nullptr;
-    // The frame is rendered at the letterboxed viewport's real pixel size, so vector art
-    // stays sharp in a large or fullscreen window.
+    // F5: letterboxed (black bars, only the stage) or filling the window, showing what
+    // lies beyond the stage edges at the same scale, like Ruffle's letterbox option.
+    bool letterbox = true;
+    // The frame is rendered at the real pixel size of the letterboxed viewport (or the
+    // whole window), so vector art stays sharp in a large or fullscreen window.
     auto fitSurface = [&]() {
         int ow = W, oh = H;
         SDL_GetRendererOutputSize(ren, &ow, &oh);
         double s = std::max(0.25, std::min((double)ow / W, (double)oh / H));
         int sw = std::max(1, (int)(W * s)), sh = std::max(1, (int)(H * s));
-        if (tex && sw == surf.width && sh == surf.height) return false;
+        double vx = 0, vy = 0;
+        if (!letterbox) {
+            sw = std::max(1, ow);
+            sh = std::max(1, oh);
+            vx = std::floor((ow - W * s) / 2);
+            vy = std::floor((oh - H * s) / 2);
+        }
+        bool sameView = viewScale == s && viewX == vx && viewY == vy;
+        viewScale = s;
+        viewX = vx;
+        viewY = vy;
+        if (tex && sw == surf.width && sh == surf.height) return !sameView;
         if (tex) SDL_DestroyTexture(tex);
         surf.resize(sw, sh);
         tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, sw, sh);
@@ -911,6 +929,45 @@ int main(int argc, char** argv) {
     // Draw every display refresh, with moving objects placed between the last two game
     // ticks; the game itself still ticks at its own frame rate.
     bool smooth = !noInterpolation;
+
+    // Game controllers press the game's own keys: D-pad / left stick = arrows, A = S
+    // (jump), B = C (FLUDD), X = X (spin), Y = Down (ground pound), bumpers = Z (talk).
+    // Each frame the held keys are compared with the last frame and only changes are sent.
+    std::set<int> padKeys;
+    auto updatePad = [&]() {
+        std::set<int> held;
+        padLeft = padRight = padUp = padDown = false;
+        for (int i = 0; i < SDL_NumJoysticks(); i++) {
+            // Opened in SDL_CONTROLLERDEVICEADDED; null for joysticks that aren't controllers.
+            SDL_GameController* pad = SDL_GameControllerFromInstanceID(SDL_JoystickGetDeviceInstanceID(i));
+            if (!pad) continue;
+            auto button = [pad](SDL_GameControllerButton b) { return SDL_GameControllerGetButton(pad, b) != 0; };
+            double lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX) / 32767.0;
+            double ly = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY) / 32767.0;
+            // Vertical needs a firmer push: up also jumps, so a sideways push shouldn't.
+            padLeft |= button(SDL_CONTROLLER_BUTTON_DPAD_LEFT) || lx < -0.35;
+            padRight |= button(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) || lx > 0.35;
+            padUp |= button(SDL_CONTROLLER_BUTTON_DPAD_UP) || ly < -0.6;
+            padDown |= button(SDL_CONTROLLER_BUTTON_DPAD_DOWN) || ly > 0.6;
+            if (button(SDL_CONTROLLER_BUTTON_A)) held.insert('S');
+            if (button(SDL_CONTROLLER_BUTTON_B)) held.insert('C');
+            if (button(SDL_CONTROLLER_BUTTON_X)) held.insert('X');
+            if (button(SDL_CONTROLLER_BUTTON_Y)) held.insert(as::keycode::Down);
+            if (button(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) || button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))
+                held.insert('Z');
+        }
+        if (!noclip) {  // in noclip the directions fly Mario instead
+            if (padLeft) held.insert(as::keycode::Left);
+            if (padRight) held.insert(as::keycode::Right);
+            if (padUp) held.insert(as::keycode::Up);
+            if (padDown) held.insert(as::keycode::Down);
+        }
+        for (int code : padKeys)
+            if (!held.count(code)) player->keyUp(code);
+        for (int code : held)
+            if (!padKeys.count(code)) player->keyDown(code, code >= 'A' && code <= 'Z' ? code - 'A' + 'a' : 0);
+        padKeys = std::move(held);
+    };
 
     // Audio output: the mixer runs on SDL's audio thread.
     SDL_AudioDeviceID audioDevice = 0;
@@ -960,6 +1017,14 @@ int main(int argc, char** argv) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
+            // Controllers: open them as they appear (including ones present at startup).
+            if (e.type == SDL_CONTROLLERDEVICEADDED) {
+                if (SDL_GameController* pad = SDL_GameControllerOpen(e.cdevice.which))
+                    std::printf("controller connected: %s\n", SDL_GameControllerName(pad));
+            } else if (e.type == SDL_CONTROLLERDEVICEREMOVED) {
+                if (SDL_GameController* pad = SDL_GameControllerFromInstanceID(e.cdevice.which))
+                    SDL_GameControllerClose(pad);
+            }
             if (player) {
                 switch (e.type) {
                     case SDL_KEYDOWN:
@@ -992,6 +1057,12 @@ int main(int argc, char** argv) {
                             std::snprintf(path, sizeof path, "sm63-dump-%d.bmp", dumps);
                             saveBmp(surf, path);
                             std::printf("wrote sm63-dump-%d.txt and .bmp\n", dumps);
+                            break;
+                        }
+                        if (e.key.keysym.sym == SDLK_F5 && !e.key.repeat) {
+                            letterbox = !letterbox;
+                            SDL_RenderSetLogicalSize(ren, letterbox ? W : 0, letterbox ? H : 0);
+                            redraw = true;
                             break;
                         }
                         if (e.key.keysym.sym == SDLK_F3 && !e.key.repeat) {
@@ -1027,7 +1098,19 @@ int main(int argc, char** argv) {
                         if (code) player->keyUp(code);
                         break;
                     }
-                    case SDL_MOUSEMOTION: player->mouseMove(e.motion.x, e.motion.y); break;
+                    case SDL_MOUSEMOTION: {
+                        double mx = e.motion.x, my = e.motion.y;
+                        if (!letterbox) {
+                            // Window coordinates -> output pixels -> stage pixels.
+                            int ww, wh, ow, oh;
+                            SDL_GetWindowSize(win, &ww, &wh);
+                            SDL_GetRendererOutputSize(ren, &ow, &oh);
+                            mx = (mx * ow / std::max(1, ww) - viewX) / viewScale;
+                            my = (my * oh / std::max(1, wh) - viewY) / viewScale;
+                        }
+                        player->mouseMove(mx, my);
+                        break;
+                    }
                     case SDL_MOUSEBUTTONDOWN:
                         if (e.button.button == SDL_BUTTON_LEFT) player->mouseDown();
                         break;
@@ -1053,6 +1136,7 @@ int main(int argc, char** argv) {
                 SDL_SetWindowTitle(win, title);
             }
         }
+        if (player) updatePad();
         Uint64 now = SDL_GetPerformanceCounter();
         acc += (now - last) * 1000.0 / SDL_GetPerformanceFrequency();
         last = now;
