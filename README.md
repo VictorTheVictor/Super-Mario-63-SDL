@@ -103,14 +103,17 @@ and the cursor turns into a hand over anything clickable.
 
 Text the SWF's embedded fonts can't fully draw (they often hold only the letters of a
 field's initial text, e.g. the star names' "Star Name" Comic Sans) is drawn in another
-font: Comic Sans MS when the build embeds it, else the game's Arial. Comic Sans is
-Microsoft's and not in this repository: put your own `COMIC.TTF` in `fonts/` (ignored by
-git) before building and CMake compiles it into the executable.
+font: the real font when the build embeds it, else the closest embedded one. The game's
+fields use Arial (bold for signs and messages, which lack J, Q, q, ";" and '"'; regular;
+italic for the music info) and Comic Sans MS bold (the star names). These are Microsoft's
+fonts and not in this repository: put your own `arialbd.ttf`, `arial.ttf`, `ariali.ttf`,
+`comicbd.ttf` and/or `comic.ttf` in `fonts/` (ignored by git) and CMake compiles them into
+the executable.
 
 Game controllers (SDL GameController, e.g. Xbox layout): D-pad or left stick moves, A jumps,
 B uses FLUDD, X spins, Y ground pounds and talks (Z), the bumpers also press Z. They press
 the same keys the game reads from the keyboard (S, C, X, Z and the arrows).
-Debugging: F2 toggles noclip (arrow keys fly Mario through walls, Shift for speed), F3
+Debugging: F2 toggles noclip (arrow keys fly Mario through walls, Shift for speed; he is invulnerable meanwhile), F3
 shows every object's outline over the frame (shape edges in cyan; boxes for clips in
 green, text in yellow, buttons in magenta, masks in orange; invisible objects such as the
 collision clips in red), F9 writes `sm63-dump-N.txt` (display tree) and `sm63-dump-N.bmp`.

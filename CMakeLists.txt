@@ -114,19 +114,17 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(game PRIVATE -Wno-unused-value -Wno-unused-variable)
 endif()
 
-# Comic Sans MS for text the SWF's embedded fonts can't draw (the star names), compiled
-# in when fonts/COMIC.TTF exists. It is Microsoft's font: keep it out of the repository.
-set(SM63_COMIC_TTF "${CMAKE_CURRENT_SOURCE_DIR}/fonts/COMIC.TTF" CACHE FILEPATH "Comic Sans MS to embed (optional)")
+# Fonts for text the SWF's embedded fonts can't fully draw (they often hold only the
+# letters of a field's initial text), compiled in from fonts/ when present: Arial (regular,
+# bold, italic) and Comic Sans MS (see cmake/embed_fonts.cmake). They are Microsoft's:
+# keep them out of the repository (fonts/ is ignored).
+set(SM63_FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/fonts" CACHE PATH "TrueType fonts to embed (optional)")
 set(SM63_FONTS_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/embedded_fonts.cpp")
-set(SM63_FONT_DEPENDS)
-if(EXISTS "${SM63_COMIC_TTF}")
-    set(SM63_FONT_DEPENDS "${SM63_COMIC_TTF}")
-    message(STATUS "Embedding ${SM63_COMIC_TTF}")
-endif()
+file(GLOB SM63_FONT_FILES CONFIGURE_DEPENDS "${SM63_FONT_DIR}/*.ttf" "${SM63_FONT_DIR}/*.TTF")
 add_custom_command(OUTPUT "${SM63_FONTS_CPP}"
-    COMMAND ${CMAKE_COMMAND} -DCOMIC_TTF=${SM63_COMIC_TTF} -DOUT=${SM63_FONTS_CPP}
+    COMMAND ${CMAKE_COMMAND} -DFONT_DIR=${SM63_FONT_DIR} -DOUT=${SM63_FONTS_CPP}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fonts.cmake
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fonts.cmake ${SM63_FONT_DEPENDS})
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fonts.cmake ${SM63_FONT_FILES})
 add_library(embedded_fonts STATIC "${SM63_FONTS_CPP}")
 target_include_directories(embedded_fonts PRIVATE src)
 target_link_libraries(embedded_fonts PRIVATE flash)

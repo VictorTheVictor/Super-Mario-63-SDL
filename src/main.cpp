@@ -875,9 +875,12 @@ int main(int argc, char** argv) {
     };
     // Debug noclip (F2): Mario flies with the arrow keys (Shift: faster), and his position
     // is pinned before and after every tick so the game's physics and collisions can't
-    // move him. The camera follows him as usual.
+    // move him. The camera follows him as usual. He is also invulnerable: enemies skip him
+    // (_root.Invincible, as with the game's own power-ups) and his health is refilled
+    // every tick against everything else (spikes, lava).
     bool noclip = false;
     double noclipX = 0, noclipY = 0;
+    as::Value invincibleBeforeNoclip;
     // Directions currently held on a game controller (D-pad or left stick).
     bool padLeft = false, padRight = false, padUp = false, padDown = false;
     auto charValue = [&]() -> as::Value {
@@ -891,6 +894,10 @@ int main(int argc, char** argv) {
         as::setMember(c, as::intern("_y"), noclipY);
         as::setMember(c, as::intern("xspeed"), 0);
         as::setMember(c, as::intern("yspeed"), 0);
+        as::Value root = as::valueOf(&player->root());
+        as::setMember(root, as::intern("Invincible"), true);
+        as::Value full = as::getMember(root, as::intern("TotalPower"));
+        if (full.isNumber()) as::setMember(root, as::intern("Power"), full);
     };
     auto tick = [&]() {
         if (!player) {
@@ -965,18 +972,39 @@ int main(int argc, char** argv) {
         rewire("SAVE", pauseMenuSave);
         rewire("SAVEXIT", pauseMenuSaveExit);
         rewire("NOSAVE", pauseMenuQuit);
-        // Once the prompt's intro animation has placed its buttons: the high score screen's
-        // spacing, in this order: Save, Save & Exit, Don't Save (at the same height).
+        // The high score screen's spacing, in this order: Save, Save & Exit, Don't Save. While
+        // the prompt's intro slides its two buttons in, they are only shown moved (setting
+        // their position would stop the timeline animating them) and Save & Exit follows
+        // Save; afterwards the positions are set for real (the buttons only take input then).
         auto* menuClip = dynamic_cast<MovieClip*>(menu.get());
         as::Value first = as::getMember(m, as::intern("1"));
-        if (menuClip && menuClip->currentFrame() == menuClip->totalFrames() && first.isObject()) {
-            double y = as::getMember(first, as::intern("_y")).toNumber();
+        as::Value third = as::getMember(m, as::intern("3"));
+        bool introDone = menuClip && menuClip->currentFrame() == menuClip->totalFrames();
+        if (first.isObject()) {
             for (auto [option, x] : {std::pair{"1", -145.5}, {"3", -2.8}, {"2", 143.2}}) {
                 as::Value button = as::getMember(m, as::intern(option));
-                if (!button.isObject()) continue;
-                if (as::getMember(button, as::intern("_x")).toNumber() != x) as::setMember(button, as::intern("_x"), x);
-                if (as::getMember(button, as::intern("_y")).toNumber() != y) as::setMember(button, as::intern("_y"), y);
+                flash::DisplayObject* d = as::displayOf(button);
+                if (!d) continue;
+                double current = as::getMember(button, as::intern("_x")).toNumber();
+                if (*option == '3' || introDone) {
+                    d->displayTransform = {};
+                    if (current != x) as::setMember(button, as::intern("_x"), x);
+                } else {
+                    d->displayTransform = flash::Matrix::translate((x - current) * 20, 0);
+                }
             }
+            if (third.isObject()) {
+                // Its height always; its intro scale and fade too (afterwards its own script
+                // scales it when highlighted).
+                for (const char* p : {"_y", "_xscale", "_yscale", "_alpha"}) {
+                    if (introDone && std::strcmp(p, "_y") != 0) break;
+                    double v = as::getMember(first, as::intern(p)).toNumber();
+                    if (as::getMember(third, as::intern(p)).toNumber() != v) as::setMember(third, as::intern(p), v);
+                }
+                as::setMember(third, as::intern("_visible"), true);
+            }
+        } else if (third.isObject()) {
+            as::setMember(third, as::intern("_visible"), false);  // until Save is there to follow
         }
         std::string action = as::getMember(m, as::intern("portAction")).toString();
         if (action == "save" || action == "saveexit") {
@@ -1498,6 +1526,9 @@ int main(int argc, char** argv) {
                         }
                         if (e.key.keysym.sym == SDLK_F2 && !e.key.repeat) {
                             noclip = !noclip;
+                            as::Value root = as::valueOf(&player->root());
+                            if (noclip) invincibleBeforeNoclip = as::getMember(root, as::intern("Invincible"));
+                            else as::setMember(root, as::intern("Invincible"), invincibleBeforeNoclip);
                             as::Value c = charValue();
                             if (c.isObject()) {
                                 noclipX = as::getMember(c, as::intern("_x")).toNumber();
