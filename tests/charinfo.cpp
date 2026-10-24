@@ -24,6 +24,9 @@ int main(int argc, char** argv) {
             std::printf(" bounds %.0fx%.0f px, fills: %d solid %d gradient %d bitmap, %zu layers", (d.bounds.xMax - d.bounds.xMin) / 20,
                         (d.bounds.yMax - d.bounds.yMin) / 20, solids, gradients, bitmapFills, d.layers.size());
             for (auto& f : d.fills) if (f.isBitmap()) std::printf(" [bitmap %d type 0x%x]", f.bitmapId, f.type);
+            for (auto& f : d.fills)
+                if (!f.isBitmap() && !f.isGradient())
+                    std::printf(" [solid #%02x%02x%02x alpha %d]", f.color.r, f.color.g, f.color.b, f.color.a);
         }
         if (c->kind == Character::Sprite) {
             auto* s = static_cast<Sprite*>(c);

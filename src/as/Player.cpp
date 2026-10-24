@@ -255,6 +255,20 @@ void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolat
     int threads = renderPool_->size();
     int bands = threads == 1 ? 1 : std::min(threads * 3, std::max(1, dst.height / 8));
     flash::Matrix m = flash::Matrix::translate(originX, originY) * flash::Matrix::scale(0.05 * scale, 0.05 * scale);
+    // The backdrop's copies: its parent's stage matrix, after each placement (translations
+    // in stage pixels, so scaled to twips).
+    std::vector<flash::Matrix> backdropMatrices;
+    std::vector<const flash::DisplayObject*> hidden = hiddenObjects;
+    if (backdrop && backdrop->visible) {
+        hidden.push_back(backdrop);
+        flash::Matrix parent = backdrop->parent() ? backdrop->parent()->worldMatrix() : flash::Matrix{};
+        for (flash::Matrix p : backdropPlacements) {
+            p.tx *= 20;
+            p.ty *= 20;
+            backdropMatrices.push_back(m * p * parent);
+        }
+    }
+    flash::renderSettings.hidden = hidden.empty() ? nullptr : &hidden;
     layerCache_.beginFrame(&dst);
     flash::renderSettings.layerCache = layerCaching_ ? &layerCache_ : nullptr;
     if (layerCaching_)
@@ -264,10 +278,13 @@ void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolat
     renderPool_->run(bands, [&](int band, int worker) {
         flash::IntRect clip{0, dst.height * band / bands, dst.width, dst.height * (band + 1) / bands};
         flash::Rasterizer& rast = worker == 0 ? r : rasterizers_[worker - 1];
+        for (const flash::Matrix& bm : backdropMatrices)
+            flash::renderDisplayObject(*backdrop, rast, dst, clip, bm, flash::ColorTransform{}, movie_, true);
         flash::renderDisplayObject(*root_, rast, dst, clip, m, flash::ColorTransform{}, movie_);
     });
     if (debugOverlay) flash::drawDebugOverlay(*root_, dst, m);
     flash::renderSettings.layerCache = nullptr;
+    flash::renderSettings.hidden = nullptr;
     flash::renderSettings.interpolation = 1;  // scripts see real positions
     layerCache_.endFrame();
 }

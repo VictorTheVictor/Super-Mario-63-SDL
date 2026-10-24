@@ -586,6 +586,7 @@ int main(int argc, char** argv) {
                 gotoSpec, trackSpec, setSpec, findText;
     int scale = 2, frames = 0, sampleEvery = 0, benchFrom = 0;
     double renderScale = 1;  // headless output size, in multiples of the stage size
+    int viewOption = 1, windowW = 0, windowH = 0;  // headless: --view N --window WxH
     int renderThreads = 0;   // 0: one per hardware thread
     bool noLayerCache = false;
     bool noInterpolation = false;  // --no-smooth-motion: draw only at game ticks
@@ -599,6 +600,8 @@ int main(int argc, char** argv) {
         std::string a = argv[i];
         if (a == "--symbol" && i + 1 < argc) symbol = argv[++i];
         else if (a == "--scale" && i + 1 < argc) scale = std::max(1, std::atoi(argv[++i]));
+        else if (a == "--view" && i + 1 < argc) viewOption = std::clamp(std::atoi(argv[++i]), 1, 8);
+        else if (a == "--window" && i + 1 < argc) std::sscanf(argv[++i], "%dx%d", &windowW, &windowH);
         else if (a == "--render-scale" && i + 1 < argc) renderScale = std::max(0.25, std::atof(argv[++i]));
         else if (a == "--smooth") flash::renderSettings.crispBitmaps = false;
         else if (a == "--deterministic") as::setDeterministic(63);
@@ -758,6 +761,68 @@ int main(int argc, char** argv) {
     const Color bg = movie.background;
     double interpolation = 1;  // window mode: how far between the last two ticks to draw
     double viewScale = 0, viewX = 0, viewY = 0;  // window mode: stage placement in `surf`
+    // How the window shows what lies beyond the stage (F5 cycles; --view N headless). Outside
+    // the letterbox the HUD's dark frame around the stage (a 25% black border meant to dim
+    // off-stage content) and the black rectangle behind the stage are hidden, and the sky
+    // (_root.FarBackground, roughly stage-sized; each course attaches its own) is extended
+    // to the window in one of these ways.
+    enum ViewMode { Letterbox = 1, SkyRepeat, SkyMirror, SkyExtendLeft, SkyExtendRight, SkyZoom, SkyStretch, SkyBlack,
+                    ViewModes = SkyBlack };
+    static const char* const viewNames[] = {"", "letterboxed", "sky repeated", "sky repeated, flipped above and below",
+                                            "sky extended by a mirrored copy on the left, centered",
+                                            "sky extended by a mirrored copy on the right, centered",
+                                            "sky zoomed to fill", "sky stretched to fill", "sky as is, black beyond"};
+    int viewMode = Letterbox;
+    auto applyView = [&]() {
+        if (!player) return;
+        player->hiddenObjects.clear();
+        player->backdrop = nullptr;
+        player->backdropPlacements.clear();
+        if (viewMode == Letterbox || viewScale <= 0) return;
+        if (auto* stats = dynamic_cast<MovieClip*>(as::resolvePath(&player->root(), "_root.Stats")))
+            stats->forEachChild([&](flash::DisplayObject& c) {
+                if (c.definition() && c.definition()->id == 799) player->hiddenObjects.push_back(&c);
+            });
+        player->root().forEachChild([&](flash::DisplayObject& c) {
+            if (c.definition() && c.definition()->id == 2102) player->hiddenObjects.push_back(&c);
+        });
+        auto* sky = as::resolvePath(&player->root(), "_root.FarBackground");
+        if (!sky || viewMode == SkyBlack) return;
+        flash::Rect b = sky->worldMatrix().apply(sky->localBounds());
+        double x0 = b.xMin / 20, y0 = b.yMin / 20, bw = (b.xMax - b.xMin) / 20, bh = (b.yMax - b.yMin) / 20;
+        if (bw < 1 || bh < 1) return;
+        // The window in stage pixels.
+        double wx0 = -viewX / viewScale, wy0 = -viewY / viewScale;
+        double ww = surf.width / viewScale, wh = surf.height / viewScale;
+        player->backdrop = sky;
+        auto& out = player->backdropPlacements;
+        if (viewMode == SkyRepeat || viewMode == SkyMirror) {
+            // Tiles covering the window; with SkyMirror every other row is flipped vertically,
+            // so the sky's top and bottom edges meet copies of themselves.
+            for (int j = (int)std::floor((wy0 - y0) / bh); y0 + j * bh < wy0 + wh; j++)
+                for (int i = (int)std::floor((wx0 - x0) / bw); x0 + i * bw < wx0 + ww; i++) {
+                    if (viewMode == SkyMirror && (j & 1))
+                        out.push_back(flash::Matrix::translate(i * bw, j * bh + 2 * y0 + bh) * flash::Matrix::scale(1, -1));
+                    else
+                        out.push_back(flash::Matrix::translate(i * bw, j * bh));
+                }
+        } else if (viewMode == SkyExtendLeft || viewMode == SkyExtendRight) {
+            // The sky beside a copy of itself mirrored left to right (so the edges where they
+            // meet match), the pair centered horizontally in the window.
+            double left = wx0 + (ww - 2 * bw) / 2;  // the pair's left edge
+            double sky = viewMode == SkyExtendLeft ? left + bw : left, mirror = viewMode == SkyExtendLeft ? left : left + bw;
+            out.push_back(flash::Matrix::translate(sky - x0, 0));
+            out.push_back(flash::Matrix::translate(mirror + bw + x0, 0) * flash::Matrix::scale(-1, 1));
+        } else if (viewMode == SkyZoom) {
+            // Uniformly scaled to cover the window, centered (overflow cropped).
+            double k = std::max(ww / bw, wh / bh);
+            out.push_back(flash::Matrix::translate(wx0 + (ww - bw * k) / 2, wy0 + (wh - bh * k) / 2) *
+                          flash::Matrix::scale(k, k) * flash::Matrix::translate(-x0, -y0));
+        } else if (viewMode == SkyStretch) {
+            out.push_back(flash::Matrix::translate(wx0, wy0) * flash::Matrix::scale(ww / bw, wh / bh) *
+                          flash::Matrix::translate(-x0, -y0));
+        }
+    };
     auto renderFrame = [&]() {
         if (player) {
             player->render(rast, surf, interpolation, viewScale, viewX, viewY);
@@ -1098,6 +1163,15 @@ int main(int argc, char** argv) {
         }
         if (screenshot.empty()) return 0;
         interpolation = headlessInterpolation;
+        viewMode = viewOption;
+        if (windowW > 0 && windowH > 0 && viewMode != Letterbox) {
+            // A window of that size, laid out as fitSurface does.
+            surf.resize(windowW, windowH);
+            viewScale = std::min((double)windowW / W, (double)windowH / H);
+            viewX = std::floor((windowW - W * viewScale) / 2);
+            viewY = std::floor((windowH - H * viewScale) / 2);
+            applyView();
+        }
         renderFrame();
         if (!saveBmp(surf, screenshot.c_str())) return 1;
         std::printf("wrote %s (frame %d)\n", screenshot.c_str(), viewed ? viewed->currentFrame() : 0);
@@ -1120,9 +1194,9 @@ int main(int argc, char** argv) {
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_PRESENTVSYNC);
     SDL_RenderSetLogicalSize(ren, W, H);  // letterboxes, and maps mouse events to stage pixels
     SDL_Texture* tex = nullptr;
-    // F5: letterboxed (black bars, only the stage) or filling the window, showing what
-    // lies beyond the stage edges at the same scale, like Ruffle's letterbox option.
-    bool letterbox = true;
+    // F5 cycles viewMode: letterboxed (black bars, only the stage), or filling the window
+    // and showing what lies beyond the stage edges at the same scale (like Ruffle's
+    // letterbox option), with the sky extended in one of five ways.
     // The frame is rendered at the real pixel size of the letterboxed viewport (or the
     // whole window), so vector art stays sharp in a large or fullscreen window.
     auto fitSurface = [&]() {
@@ -1131,7 +1205,7 @@ int main(int argc, char** argv) {
         double s = std::max(0.25, std::min((double)ow / W, (double)oh / H));
         int sw = std::max(1, (int)(W * s)), sh = std::max(1, (int)(H * s));
         double vx = 0, vy = 0;
-        if (!letterbox) {
+        if (viewMode != Letterbox) {
             sw = std::max(1, ow);
             sh = std::max(1, oh);
             vx = std::floor((ow - W * s) / 2);
@@ -1344,8 +1418,10 @@ int main(int argc, char** argv) {
                             break;
                         }
                         if (e.key.keysym.sym == SDLK_F5 && !e.key.repeat) {
-                            letterbox = !letterbox;
+                            viewMode = viewMode % ViewModes + 1;
+                            bool letterbox = viewMode == Letterbox;
                             SDL_RenderSetLogicalSize(ren, letterbox ? W : 0, letterbox ? H : 0);
+                            std::printf("view %d: %s\n", viewMode, viewNames[viewMode]);
                             redraw = true;
                             break;
                         }
@@ -1389,7 +1465,7 @@ int main(int argc, char** argv) {
                     }
                     case SDL_MOUSEMOTION: {
                         double mx = e.motion.x, my = e.motion.y;
-                        if (!letterbox) {
+                        if (viewMode != Letterbox) {
                             // Window coordinates -> output pixels -> stage pixels.
                             int ww, wh, ow, oh;
                             SDL_GetWindowSize(win, &ww, &wh);
@@ -1443,6 +1519,7 @@ int main(int argc, char** argv) {
         // changed; the display may refresh more often than that.
         interpolation = smooth && player ? std::clamp(acc / frameMs, 0.0, 1.0) : 1.0;
         if (fitSurface() || steps || redraw || (smooth && player)) {
+            applyView();  // after ticks: objects may have been replaced
             rendering = std::async(std::launch::async, renderFrame);
             redraw = false;
         }

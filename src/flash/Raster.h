@@ -2,6 +2,7 @@
 // Software rasterizer: anti-aliased nonzero fills via signed-area accumulation,
 // with solid, gradient and bitmap paints. Output is premultiplied 0xAARRGGBB.
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <vector>
@@ -32,6 +33,7 @@ struct IntRect {
 };
 
 class LayerCache;
+class DisplayObject;
 
 // Settings for the frame being rendered.
 struct RenderSettings {
@@ -48,6 +50,12 @@ struct RenderSettings {
     // objects at, for rendering more often than the game ticks. 1 outside rendering, so
     // scripts and hit tests always see the real state.
     double interpolation = 1;
+    // Objects left out of the frame, as if invisible (window presentation options).
+    const std::vector<const DisplayObject*>* hidden = nullptr;
+
+    bool isHidden(const DisplayObject* o) const {
+        return hidden && std::find(hidden->begin(), hidden->end(), o) != hidden->end();
+    }
 };
 extern RenderSettings renderSettings;
 

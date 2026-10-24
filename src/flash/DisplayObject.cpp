@@ -193,7 +193,7 @@ bool usesCachedLayer(const DisplayObject& o) {
 void renderDisplayObject(DisplayObject& o, Rasterizer& r, Surface& dst, const IntRect& clip,
                          const Matrix& parentMatrix, const ColorTransform& parentCx,
                          const Movie& movie, bool ignoreVisible) {
-    if (!o.visible && !ignoreVisible) return;
+    if ((!o.visible || renderSettings.isHidden(&o)) && !ignoreVisible) return;
     Matrix m = parentMatrix * o.drawMatrix();
     ColorTransform cx = parentCx * o.cxform;
     bool needsLayer = !o.filters.empty() || o.blendMode >= BlendLayer;
@@ -227,7 +227,7 @@ namespace {
 // layer or a mask), with the matrices rendering will use for them.
 void collectCachedLayers(DisplayObject& o, const Matrix& parentMatrix,
                          std::vector<std::pair<DisplayObject*, Matrix>>& out) {
-    if (!o.visible) return;
+    if (!o.visible || renderSettings.isHidden(&o)) return;
     Matrix m = parentMatrix * o.drawMatrix();
     if (!o.filters.empty() || o.blendMode >= BlendLayer) {
         if (usesCachedLayer(o)) out.push_back({&o, m});

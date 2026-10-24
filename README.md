@@ -81,9 +81,20 @@ Game mode: input goes to the game; Shift+Escape quits. In a level, Escape (or a
 controller's Start button) pauses the game and its sound and opens a menu built from the
 star save prompt: the first option saves and resumes, the second quits the game; Escape
 again resumes. Its option text artwork is hidden for now (the prompt's "Save & Continue" /
-"Don't Save" words are vector shapes, not text). F11 toggles fullscreen, F5 toggles
-letterboxing (off: the game fills the window and shows what lies beyond the stage edges),
-F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F6 toggles
+"Don't Save" words are vector shapes, not text). F11 toggles fullscreen. F5 cycles
+how the window is filled:
+
+1. letterboxed (only the stage, black bars);
+2. sky repeated in every direction;
+3. sky repeated, with the copies above and below flipped vertically;
+4. sky extended by a mirrored copy on its left, the pair centered;
+5. sky extended by a mirrored copy on its right, the pair centered;
+6. sky zoomed to fill the window (cropped);
+7. sky stretched to fill the window;
+8. sky as is, black beyond it;
+
+then back to 1. Modes 2–8 fill the window and show what lies beyond the stage edges; they
+hide the HUD's 25% black frame around the stage and the black rectangle behind it. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F6 toggles
 smooth motion. The game's fps counter shows the frames actually drawn per second.
 Links (the Runouw and Newgrounds banners) open in the default browser, and the cursor
 turns into a hand over anything clickable.
@@ -126,6 +137,7 @@ Headless options for testing and profiling (with `--frames N`):
     --deterministic                         # fixed random seed and frame-driven clock
     --threads 1 --no-layer-cache            # reference renderer for comparisons
     --interpolate 0.5                       # screenshot halfway between the last two ticks
+    --view 3 --window 1920x1080             # screenshot a window of that size in F5 mode 3
     --course C-1@F | --course C-1,lefttransition2,700,-250@F | --course StartInsideofCastle()@F
                                             # switch course at frame F (as the game does)
     --symbol '#2539'                        # view any character by id, scaled to fit

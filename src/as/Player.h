@@ -40,6 +40,13 @@ public:
     // (originX, originY), and content beyond the stage edges shows (no letterboxing).
     void render(flash::Rasterizer& r, flash::Surface& dst, double interpolation = 1, double scale = 0,
                 double originX = 0, double originY = 0);
+    // Window presentation beyond the stage edges (set before each render; pointers must
+    // be current). `hiddenObjects` are left out of the frame. `backdrop` is drawn first,
+    // beneath everything, once per placement instead of in its own place: each placement
+    // is a matrix in stage pixels applied on top of the backdrop's position on the stage.
+    std::vector<const flash::DisplayObject*> hiddenObjects;
+    flash::DisplayObject* backdrop = nullptr;
+    std::vector<flash::Matrix> backdropPlacements;
     // Render threads, including the caller (default: the machine's hardware threads).
     void setRenderThreads(int n);
     // Keeping filtered layers between frames (on by default; off for comparisons).
