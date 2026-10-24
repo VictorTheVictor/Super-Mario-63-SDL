@@ -1,6 +1,10 @@
 #include "flash/Raster.h"
 
 #include <cmath>
+#include <cstring>
+#include <memory>
+#include <mutex>
+#include <unordered_map>
 
 #include "flash/Swf.h"
 
@@ -48,6 +52,28 @@ inline void blend(uint32_t& d, uint32_t s, uint32_t cov) {
         return;
     }
     d = s + scale255(d, 255 - (s >> 24));
+}
+
+// blend() at full coverage.
+inline void blendFull(uint32_t& d, uint32_t s) {
+    uint32_t a = s >> 24;
+    if (a == 255) d = s;
+    else if (a) d = s + scale255(d, 255 - a);
+}
+
+// Paints `n` fully covered pixels of one color.
+inline void fillSpan(uint32_t* out, int n, uint32_t c) {
+    uint32_t a = c >> 24;
+    if (a == 255) std::fill(out, out + n, c);
+    else if (a)
+        for (int i = 0; i < n; i++) out[i] = c + scale255(out[i], 255 - a);
+}
+
+// Paints `n` fully covered pixels from a sampler's color() and step(), leaving it `n`
+// pixels further along.
+template <class Sampler>
+inline void sampleSpan(Sampler& s, uint32_t* out, int n) {
+    for (int i = 0; i < n; i++, s.step()) blendFull(out[i], s.color());
 }
 
 // floor() for values well inside the int range, without a libm call.
@@ -128,6 +154,84 @@ inline uint32_t sampleBilinear(const Bitmap& b, double u, double v, bool repeat)
     }
     return out;
 }
+
+// Bitmaps with a color transform applied to every texel. A nearest-texel fill reads each
+// texel as is, so painting from such a copy gives exactly what transforming every sampled
+// texel would, without redoing the transform per pixel each frame (the castle's darkened
+// sky). A copy is made once fills with that bitmap and transform have covered about as
+// many pixels as it has texels, so transforms that change every frame (fades) don't pay
+// for copies they never reuse.
+class TransformedBitmaps {
+public:
+    std::shared_ptr<const Bitmap> get(const Bitmap& b, const ColorTransform& cx, int64_t pixels) {
+        Key key{&b, {}};
+        std::memcpy(key.cx, &cx, sizeof key.cx);
+        std::lock_guard<std::mutex> lock(mutex_);
+        Entry& e = entries_[key];
+        e.lastUse = ++uses_;
+        if (e.copy) return e.copy;
+        e.pixels += pixels;
+        if (e.pixels < (int64_t)b.width * b.height) {
+            if (entries_.size() > kMaxEntries) trim();
+            return nullptr;
+        }
+        auto copy = std::make_shared<Bitmap>();
+        copy->width = b.width;
+        copy->height = b.height;
+        copy->pixels.resize(b.pixels.size());
+        for (size_t i = 0; i < b.pixels.size(); i++) copy->pixels[i] = applyCxPremul(cx, b.pixels[i]);
+        e.copy = copy;
+        bytes_ += copy->pixels.size() * 4;
+        if (bytes_ > kMaxBytes || entries_.size() > kMaxEntries) trim();
+        return copy;
+    }
+
+private:
+    struct Key {
+        const Bitmap* bitmap;
+        float cx[8];
+        bool operator==(const Key& o) const { return bitmap == o.bitmap && !std::memcmp(cx, o.cx, sizeof cx); }
+    };
+    struct KeyHash {
+        size_t operator()(const Key& k) const {
+            uint64_t h = (uint64_t)(uintptr_t)k.bitmap * 0x9E3779B97F4A7C15ull;
+            uint32_t bits[8];
+            std::memcpy(bits, k.cx, sizeof bits);
+            for (uint32_t v : bits) h = (h ^ v) * 0x100000001B3ull;
+            return (size_t)h;
+        }
+    };
+    struct Entry {
+        std::shared_ptr<const Bitmap> copy;
+        int64_t pixels = 0;
+        uint64_t lastUse = 0;
+    };
+    static constexpr size_t kMaxBytes = 64u << 20, kMaxEntries = 4096;
+
+    // Drops the least recently used half (copies still being painted from stay alive
+    // through their shared pointers).
+    void trim() {
+        std::vector<uint64_t> uses;
+        for (auto& [k, e] : entries_) uses.push_back(e.lastUse);
+        std::nth_element(uses.begin(), uses.begin() + uses.size() / 2, uses.end());
+        uint64_t cutoff = uses[uses.size() / 2];
+        for (auto it = entries_.begin(); it != entries_.end();) {
+            if (it->second.lastUse < cutoff) {
+                if (it->second.copy) bytes_ -= it->second.copy->pixels.size() * 4;
+                it = entries_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    std::mutex mutex_;
+    std::unordered_map<Key, Entry, KeyHash> entries_;
+    uint64_t uses_ = 0;
+    size_t bytes_ = 0;
+};
+
+TransformedBitmaps transformedBitmaps;
 
 // Adds a line's signed area coverage to the accumulation rows, widening each touched
 // row's [rowMin, rowMax] cell range.
@@ -345,7 +449,8 @@ void Rasterizer::fill(Surface& dst, const IntRect& clip, const Paint& paint) {
     segs_.clear();
 
     // Paint setup. A sampler gives the color of consecutive pixels along a row:
-    // row(x, py) positions it at pixel x, step() moves one pixel right, color() samples.
+    // row(x, py) positions it at pixel x, step() moves one pixel right, color() samples,
+    // and span(out, n) paints n fully covered pixels from there and moves past them.
     const FillStyle* fs = paint.style;
     const Bitmap* bmp = paint.bitmap;
     bool identityCx = paint.cxform.isIdentity();
@@ -357,16 +462,27 @@ void Rasterizer::fill(Surface& dst, const IntRect& clip, const Paint& paint) {
             uint32_t* out = dst.pixels.data() + (size_t)(bb.y0 + y) * dst.width + bb.x0;
             float sum = 0;
             sampler.row(bb.x0 + x0, bb.y0 + y + 0.5);
-            for (int x = x0; x < bw; x++, sampler.step()) {
+            for (int x = x0; x < bw;) {
                 sum += row[x];
                 float a = std::fabs(sum);
                 uint32_t cov = a >= 1.f ? 256 : (uint32_t)(a * 256.f);
                 if (cov < 2) {
                     if (x > x1) break;  // past the last edge: the rest of the row is empty
+                    x++, sampler.step();
+                    continue;
+                }
+                if (cov == 256) {
+                    // Inside the shape: cells between edges (and past the row's last one)
+                    // accumulate nothing, so coverage stays full until the next edge.
+                    int end = x + 1;
+                    while (end < bw && (end > x1 || row[end] == 0.f)) end++;
+                    sampler.span(out + x, end - x);
+                    x = end;
                     continue;
                 }
                 uint32_t c = sampler.color();
                 if (c >> 24) blend(out[x], c, cov);
+                x++, sampler.step();
             }
             std::fill(row + x0, row + std::min(x1 + 1, stride), 0.f);
         }
@@ -385,6 +501,7 @@ void Rasterizer::fill(Surface& dst, const IntRect& clip, const Paint& paint) {
             void row(int, double) {}
             void step() {}
             uint32_t color() const { return c; }
+            void span(uint32_t* out, int n) const { fillSpan(out, n, c); }
         } solid{premultiply(applyCx(paint.cxform, fs ? fs->color : paint.color))};
         if (solid.c >> 24) paintRows(solid);
         else clearRows();
@@ -414,6 +531,15 @@ void Rasterizer::fill(Surface& dst, const IntRect& clip, const Paint& paint) {
                 if (linear) return ramp[spreadIndex((gx + 16384) / 32768, spread)];
                 double gy = inv.b * px + inv.d * py + inv.ty;
                 return ramp[spreadIndex(std::sqrt(gx * gx + gy * gy) / 16384, spread)];
+            }
+            void span(uint32_t* out, int n) {
+                // A linear gradient whose ramp runs vertically has one color per row.
+                if (linear && inv.a == 0) {
+                    fillSpan(out, n, color());
+                    px += n;
+                } else {
+                    sampleSpan(*this, out, n);
+                }
             }
         } gradient{inv, ramp, fs->spread, linear};
         paintRows(gradient);
@@ -447,12 +573,19 @@ void Rasterizer::fill(Surface& dst, const IntRect& clip, const Paint& paint) {
                 uint32_t c = sampleBilinear(bmp, u, v, repeat);
                 return identityCx ? c : applyCxPremul(cx, c);
             }
+            void span(uint32_t* out, int n) { sampleSpan(*this, out, n); }
         } bilinear{inv, *bmp, repeat, identityCx, paint.cxform};
         paintRows(bilinear);
         return;
     }
     // Nearest texel. For repeating fills, `baseX`/`baseY` track which repeat of the
-    // bitmap the row is in, so wrapping is usually a compare instead of a division.
+    // bitmap the row is in, so wrapping is usually a compare instead of a division. With a
+    // color transform, texels come from a transformed copy once it pays off.
+    std::shared_ptr<const Bitmap> transformed;
+    if (!identityCx && (transformed = transformedBitmaps.get(*bmp, paint.cxform, (int64_t)bw * bh))) {
+        bmp = transformed.get();
+        identityCx = true;
+    }
     struct {
         const Matrix& inv;
         const Bitmap& bmp;
@@ -488,6 +621,22 @@ void Rasterizer::fill(Surface& dst, const IntRect& clip, const Paint& paint) {
             }
             uint32_t c = bmp.pixels[(size_t)ty * bmp.width + tx];
             return identityCx ? c : applyCxPremul(cx, c);
+        }
+        void span(uint32_t* out, int n) {
+            if (inv.b != 0 || !identityCx) {
+                sampleSpan(*this, out, n);
+                return;
+            }
+            // Unrotated: the texel row is the same along the span (the same expression
+            // color() evaluates, so the same texels).
+            int ty = floorInt(inv.b * px + inv.d * py + inv.ty);
+            ty = repeat ? wrap(ty, bmp.height, invH, baseY) : std::clamp(ty, 0, bmp.height - 1);
+            const uint32_t* texels = bmp.pixels.data() + (size_t)ty * bmp.width;
+            for (int i = 0; i < n; i++, px += 1) {
+                int tx = floorInt(inv.a * px + inv.c * py + inv.tx);
+                tx = repeat ? wrap(tx, bmp.width, invW, baseX) : std::clamp(tx, 0, bmp.width - 1);
+                blendFull(out[i], texels[tx]);
+            }
         }
     } nearest{inv, *bmp, repeat, identityCx, paint.cxform, 1.0 / bmp->width, 1.0 / bmp->height};
     paintRows(nearest);
