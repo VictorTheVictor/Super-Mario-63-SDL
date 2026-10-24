@@ -782,7 +782,11 @@ void MovieClip::gotoFrame(int frame, bool andPlay) {
     }
     for (int d : drop) removeChild(d);
 
-    for (auto& [d, s] : target) {
+    for (auto& entry : target) {
+        // Plain references, not a structured binding: lambdas below capture `s`, which
+        // older compilers (NDK r25's clang) only allow for ordinary variables.
+        int d = entry.first;
+        PlaceState& s = entry.second;
         DisplayObject* existing = childAt(d);
         if (existing && !existing->placedByTimeline) continue;  // depth owned by script
         // A new instance takes the whole timeline state. One that survives keeps what
