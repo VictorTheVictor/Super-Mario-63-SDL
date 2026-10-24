@@ -96,7 +96,7 @@ then back to 1. Modes 2–8 fill the window and show what lies beyond the stage 
 hide the HUD's 25% black frame around the stage and the black rectangle behind it, move
 the HUD's counters, hint line and quality box to the window's edges, stretch the screen's
 dark overlay (the castle before enough stars) over the whole window, and show door and
-course transitions letterboxed. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F6 toggles
+course transitions letterboxed. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off: draw as fast as possible, to measure rendering), F6 toggles
 smooth motion. The game's fps counter shows the frames actually drawn per second.
 Links (the Runouw and Newgrounds banners) open in the default browser (not on Android),
 and the cursor turns into a hand over anything clickable.

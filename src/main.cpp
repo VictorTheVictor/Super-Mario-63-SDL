@@ -1032,6 +1032,16 @@ int main(int argc, char** argv) {
     };
 
     if (!screenshot.empty() || dump || bench || diagnose) {
+        // --view N --window WxH: frames (screenshot, --bench) drawn as a window of that size
+        // in that F5 mode, laid out as fitSurface does.
+        viewMode = viewOption;
+        bool windowView = windowW > 0 && windowH > 0 && viewMode != Letterbox;
+        if (windowView) {
+            surf.resize(windowW, windowH);
+            viewScale = std::min((double)windowW / W, (double)windowH / H);
+            viewX = std::floor((windowW - W * viewScale) / 2);
+            viewY = std::floor((windowH - H * viewScale) / 2);
+        }
         std::vector<InputEvent> events = parseInput(inputSpec);
         std::vector<double> tickMs, renderMs;
         for (int i = 0; i < frames; i++) {
@@ -1154,6 +1164,7 @@ int main(int argc, char** argv) {
                                     h.variable.c_str(), h.text.c_str());
             }
             if (bench && i >= benchFrom) {
+                if (windowView) applyView();
                 renderFrame();
                 renderMs.push_back((SDL_GetPerformanceCounter() - t1) * 1000.0 / SDL_GetPerformanceFrequency());
                 tickMs.push_back((t1 - t0) * 1000.0 / SDL_GetPerformanceFrequency());
@@ -1249,15 +1260,7 @@ int main(int argc, char** argv) {
         }
         if (screenshot.empty()) return 0;
         interpolation = headlessInterpolation;
-        viewMode = viewOption;
-        if (windowW > 0 && windowH > 0 && viewMode != Letterbox) {
-            // A window of that size, laid out as fitSurface does.
-            surf.resize(windowW, windowH);
-            viewScale = std::min((double)windowW / W, (double)windowH / H);
-            viewX = std::floor((windowW - W * viewScale) / 2);
-            viewY = std::floor((windowH - H * viewScale) / 2);
-            applyView();
-        }
+        if (windowView) applyView();
         renderFrame();
         if (!saveBmp(surf, screenshot.c_str())) return 1;
         std::printf("wrote %s (frame %d)\n", screenshot.c_str(), viewed ? viewed->currentFrame() : 0);
@@ -1278,6 +1281,7 @@ int main(int argc, char** argv) {
     SDL_Window* win = SDL_CreateWindow("Super Mario 63", SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, W * scale, H * scale, windowFlags);
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_PRESENTVSYNC);
+    bool vsync = true;
     SDL_RenderSetLogicalSize(ren, W, H);  // letterboxes, and maps mouse events to stage pixels
     SDL_Texture* tex = nullptr;
     // F5 cycles viewMode: letterboxed (black bars, only the stage), or filling the window
@@ -1447,9 +1451,10 @@ int main(int argc, char** argv) {
         double secs = (SDL_GetPerformanceCounter() - fpsSince) / (double)SDL_GetPerformanceFrequency();
         if (player && secs >= 0.5) renderFps = framesShown / secs;
         if (player && secs >= 1) {
-            char title[96];
-            std::snprintf(title, sizeof title, "Super Mario 63 — %.0f fps, %dx%d%s%s", framesShown / secs, surf.width,
-                          surf.height, smooth ? "" : " (smooth motion off)", noclip ? " [NOCLIP]" : "");
+            char title[128];
+            std::snprintf(title, sizeof title, "Super Mario 63 — %.0f fps, %dx%d%s%s%s", framesShown / secs, surf.width,
+                          surf.height, smooth ? "" : " (smooth motion off)", noclip ? " [NOCLIP]" : "",
+                          vsync ? "" : " (vsync off)");
             SDL_SetWindowTitle(win, title);
             framesShown = 0;
             fpsSince = SDL_GetPerformanceCounter();
@@ -1522,6 +1527,15 @@ int main(int argc, char** argv) {
                         if (e.key.keysym.sym == SDLK_F6 && !e.key.repeat) {
                             smooth = !smooth;
                             redraw = true;
+                            break;
+                        }
+                        // F7: vsync off draws as fast as the renderer can (the title's fps then
+                        // measures rendering speed; expect tearing).
+                        if (e.key.keysym.sym == SDLK_F7 && !e.key.repeat) {
+                            vsync = !vsync;
+                            if (SDL_RenderSetVSync(ren, vsync) != 0)
+                                std::fprintf(stderr, "could not change vsync: %s\n", SDL_GetError());
+                            std::printf("vsync %s\n", vsync ? "on" : "off");
                             break;
                         }
                         if (e.key.keysym.sym == SDLK_F2 && !e.key.repeat) {
