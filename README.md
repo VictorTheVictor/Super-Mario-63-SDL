@@ -19,7 +19,7 @@ The game logic is transpiled from runouw's ActionScript in the XFL source into C
 
 It maps each script to the SWF location it was compiled to and verifies the mapping against
 the compiled bytecode; `src/game/generated/REPORT.txt` lists anything it could not map.
-Re-run `cmake -S . -B build` afterwards so the build picks up added or removed files.
+Re-run `cmake -S . -B build/debug` afterwards so the build picks up added or removed files.
 Python 3 (standard library only) is needed for this step, not for building or running.
 
 **Licensing:** the generated code is a translation of runouw's code. The upstream repository
@@ -30,8 +30,19 @@ Without `src/game/generated`, the build still works and runs the timelines witho
 
 Requires a C++17 compiler, CMake and SDL2. `third_party/minimp3` (CC0) is vendored.
 
-    cmake -S . -B build -G Ninja
-    ninja -C build
+    cmake -S . -B build/debug -G Ninja      # RelWithDebInfo (default): optimized, with debug info
+    ninja -C build/debug
+
+Release builds for other people go in `build/release`, so the two never overwrite each
+other. On Linux, with the SDL2 2.32.10 source (see android/README.md):
+
+    scripts/build-linux-release.sh path/to/SDL2-2.32.10 [path/to/Super_Mario_63_2010.swf]
+
+builds a stripped `build/release/sm63` with SDL2 and the C++ runtime linked in (only glibc
+and the desktop libraries SDL loads at runtime come from the system) and packages
+`dist/sm63-linux-x86_64.tar.gz`. `src/compat/` binds it to old glibc symbol versions, so
+it runs on glibc 2.34 and newer (Ubuntu 22.04, Debian 12, Fedora 35 and later) even when
+built on a current distribution.
 
 ### Windows (cross-compiled, Windows XP and newer, 32- and 64-bit)
 
@@ -54,16 +65,16 @@ so a release is just the executable next to the SWF. If it is missing, the windo
 so (in the game's sign font) and starts the game when the SWF is dropped on it; dropping
 the SWF onto the executable passes it as the path too.
 
-    ./build/sm63 path/to/Super_Mario_63_2010.swf                  # game mode (script Player)
-    ./build/sm63 path/to/Super_Mario_63_2010.swf --symbol NAME    # one exported symbol
-    ./build/sm63 path/to/Super_Mario_63_2010.swf --stats          # SWF contents summary
-    ./build/sm63 path/to/Super_Mario_63_2010.swf --check-exports  # render every export (smoke test)
-    ./build/sm63 --selftest out.bmp                               # rasterizer + filter test images
-    ./build/swf_check path/to/Super_Mario_63_2010.swf             # structural checks (morphs, fonts, text, buttons)
-    ./build/jpeg_check in.jpg out.rgb [tables.bin]                # JPEG decoder, raw RGB output
-    ./build/as_test                                               # AS2 runtime unit tests
-    ./build/stage_test path/to/Super_Mario_63_2010.swf            # MovieClip API + event order
-    ./build/audio_test path/to/Super_Mario_63_2010.swf [sine.mp3] # decoders, mixer, Sound API
+    ./build/debug/sm63 path/to/Super_Mario_63_2010.swf                  # game mode (script Player)
+    ./build/debug/sm63 path/to/Super_Mario_63_2010.swf --symbol NAME    # one exported symbol
+    ./build/debug/sm63 path/to/Super_Mario_63_2010.swf --stats          # SWF contents summary
+    ./build/debug/sm63 path/to/Super_Mario_63_2010.swf --check-exports  # render every export (smoke test)
+    ./build/debug/sm63 --selftest out.bmp                               # rasterizer + filter test images
+    ./build/debug/swf_check path/to/Super_Mario_63_2010.swf             # structural checks (morphs, fonts, text, buttons)
+    ./build/debug/jpeg_check in.jpg out.rgb [tables.bin]                # JPEG decoder, raw RGB output
+    ./build/debug/as_test                                               # AS2 runtime unit tests
+    ./build/debug/stage_test path/to/Super_Mario_63_2010.swf            # MovieClip API + event order
+    ./build/debug/audio_test path/to/Super_Mario_63_2010.swf [sine.mp3] # decoders, mixer, Sound API
 
 Symbol viewer keys: Space play/pause, Left/Right step a frame, Escape quit.
 Game mode: input goes to the game; Shift+Escape quits. In a level, Escape (or a

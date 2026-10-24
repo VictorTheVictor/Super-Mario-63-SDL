@@ -15,11 +15,20 @@ set(SM63_SDL_SOURCE "" CACHE PATH "SDL2 source directory to build and link stati
 if(ANDROID)
     set(SM63_SDL_LIBS SDL2::SDL2)
 elseif(SM63_SDL_SOURCE)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # Portable Linux release: bind every file (SDL's too) to old glibc symbol versions.
+        set(SM63_GLIBC_COMPAT ON)
+        enable_language(C)
+        add_compile_options(-include ${CMAKE_CURRENT_SOURCE_DIR}/src/compat/glibc_compat.h)
+    endif()
     set(SDL_SHARED OFF CACHE BOOL "" FORCE)
     set(SDL_STATIC ON CACHE BOOL "" FORCE)
     set(SDL_TEST OFF CACHE BOOL "" FORCE)
     add_subdirectory(${SM63_SDL_SOURCE} SDL2 EXCLUDE_FROM_ALL)
-    set(SM63_SDL_LIBS SDL2::SDL2main SDL2::SDL2-static)
+    set(SM63_SDL_LIBS SDL2::SDL2-static)
+    if(TARGET SDL2::SDL2main)
+        set(SM63_SDL_LIBS SDL2::SDL2main SDL2::SDL2-static)
+    endif()
 else()
     find_package(SDL2 REQUIRED)
     set(SM63_SDL_LIBS SDL2::SDL2)
@@ -113,6 +122,16 @@ endif()
 
 add_executable(sm63 src/main.cpp)
 target_link_libraries(sm63 PRIVATE game ${SM63_SDL_LIBS})
+if(SM63_SDL_SOURCE AND NOT WIN32)
+    # Portable Linux release: SDL2 is linked in, and so is the C++ runtime (testers'
+    # distributions may have an older libstdc++); only glibc comes from the system.
+    # libgcc stays shared: the static one needs glibc 2.35's _dl_find_object.
+    target_link_options(sm63 PRIVATE -static-libstdc++)
+endif()
+if(SM63_GLIBC_COMPAT)
+    target_sources(sm63 PRIVATE src/compat/glibc_compat.c)
+    set_source_files_properties(src/compat/glibc_compat.c PROPERTIES COMPILE_OPTIONS "-std=c11")
+endif()
 if(MINGW)
     # One self-contained exe: no libstdc++/libgcc/winpthread DLLs, and no console window.
     # msvcrt-os: the system msvcrt.dll every Windows since XP has, not the Universal CRT
