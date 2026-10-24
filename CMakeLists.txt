@@ -8,6 +8,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 find_package(SDL2 REQUIRED)
+find_package(Threads REQUIRED)
 
 add_library(flash STATIC
     src/flash/Inflate.cpp
@@ -15,12 +16,14 @@ add_library(flash STATIC
     src/flash/Morph.cpp
     src/flash/Text.cpp
     src/flash/Effects.cpp
+    src/flash/WorkerPool.cpp
     src/flash/Swf.cpp
     src/flash/Shape.cpp
     src/flash/Raster.cpp
     src/flash/DisplayObject.cpp
 )
 target_include_directories(flash PUBLIC src)
+target_link_libraries(flash PRIVATE Threads::Threads)  # render worker threads
 
 # Audio decoding and mixing (no platform dependencies). minimp3 is vendored in third_party.
 add_library(audio STATIC
@@ -59,7 +62,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 # Game scripts transpiled from the XFL source by tools/as2cpp (src/game/generated).
-file(GLOB GAME_SCRIPTS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/game/generated/*.cpp)
+# Re-run cmake after regenerating them. (No CONFIGURE_DEPENDS: its per-build glob check
+# made ninja drop its dependency log and recompile everything on every build.)
+file(GLOB GAME_SCRIPTS ${CMAKE_SOURCE_DIR}/src/game/generated/*.cpp)
 if(NOT GAME_SCRIPTS)
     message(STATUS "No generated scripts in src/game/generated: building without game scripts")
     set(GAME_SCRIPTS src/game/NoScripts.cpp)

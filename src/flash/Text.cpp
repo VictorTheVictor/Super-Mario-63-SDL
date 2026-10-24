@@ -463,7 +463,16 @@ void TextField::setHtmlText(const std::string& src) {
     dirty_ = true;
 }
 
+void TextField::hashContent(RenderHash& h) {
+    h.add(layoutVersion_);
+    h.add((uint64_t)border << 1 | background);
+    auto rgba = [](Color c) { return (uint64_t)(c.r | c.g << 8 | c.b << 16 | c.a << 24); };
+    h.add(rgba(borderColor) << 32 | rgba(backgroundColor));
+    for (double v : {bounds.xMin, bounds.yMin, bounds.xMax, bounds.yMax}) h.add(v);
+}
+
 void TextField::layout() {
+    layoutVersion_ = nextContentVersion();
     glyphs_.clear();
     lines_.clear();
     const double gutter = 40;  // 2 px
@@ -595,7 +604,8 @@ void TextField::render(Rasterizer& r, Surface& dst, const IntRect& clip, const M
                 Point a = q[i], b = q[(i + 1) % 4];
                 double dx = b.x - a.x, dy = b.y - a.y, len = std::hypot(dx, dy);
                 if (len < 1e-9) continue;
-                double nx = -dy / len * 0.5, ny = dx / len * 0.5;
+                double hw = 0.5 * renderSettings.scale;  // one stage pixel wide
+                double nx = -dy / len * hw, ny = dx / len * hw;
                 Point s[4] = {{a.x + nx, a.y + ny}, {b.x + nx, b.y + ny}, {b.x - nx, b.y - ny}, {a.x - nx, a.y - ny}};
                 r.closedPolygon(s, 4);
             }

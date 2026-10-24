@@ -1,9 +1,13 @@
 #pragma once
 // Display list: DisplayObject tree with MovieClip timeline playback.
 
+#include <array>
+#include <atomic>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -31,6 +35,31 @@ struct TimelineHooks {
     virtual void onStreamBlock(MovieClip& clip, uint32_t blockIndex) {}
 };
 extern TimelineHooks* timelineHooks;
+
+// Accumulates everything that affects how an object renders, to tell whether a cached
+// rendering of it is still valid.
+struct RenderHash {
+    uint64_t h = 1469598103934665603ull;
+    void add(uint64_t v) {
+        h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+        h *= 1099511628211ull;
+    }
+    void add(double v) {
+        uint64_t bits;
+        std::memcpy(&bits, &v, sizeof bits);
+        add(bits);
+    }
+    void add(float v) { add((double)v); }
+    void add(const Matrix& m) {
+        for (double v : {m.a, m.b, m.c, m.d, m.tx, m.ty}) add(v);
+    }
+    void add(const ColorTransform& c) {
+        for (float v : {c.rMul, c.gMul, c.bMul, c.aMul, c.rAdd, c.gAdd, c.bAdd, c.aAdd}) add(v);
+    }
+};
+
+// Unique stamps for content changes (drawing API edits, text layouts).
+uint64_t nextContentVersion();
 
 class DisplayObject : public std::enable_shared_from_this<DisplayObject> {
 public:
@@ -70,6 +99,11 @@ public:
     // Shape-accurate hit test; `m` maps this object's space to the space of `p`.
     virtual bool hitTest(const Matrix& m, Point p) const { return false; }
     virtual void forEachChild(const std::function<void(DisplayObject&)>& fn) {}
+    // Adds this object's subtree, as it would render, to `h`. With `self` false the
+    // object's own matrix and color transform are left out.
+    void hashForRender(RenderHash& h, bool self = true);
+    // Subclass state that changes rendering beyond the common properties and children.
+    virtual void hashContent(RenderHash& h) {}
     // Called once per frame tick (timeline advance, recursive; viewer mode only).
     virtual void advance() {}
 
@@ -119,10 +153,23 @@ struct Drawing {
     void curveTo(Point c, Point p);
     // Committed paths plus any pending (auto-closed) fill and line.
     ShapeDef snapshot() const;
+    // snapshot(), kept until the next change. Not thread-safe: rendering threads only
+    // read it after prepareForRender() built it.
+    const ShapeDef& cachedShape() {
+        if (!snapshotValid_) {
+            snapshot_ = snapshot();
+            snapshotValid_ = true;
+        }
+        return snapshot_;
+    }
+    const ShapeDef& preparedShape() const { return snapshot_; }
     bool empty() const;
+    uint64_t version = nextContentVersion();  // changes with every edit
 
 private:
     void flushLine();
+    ShapeDef snapshot_;
+    bool snapshotValid_ = false;
 };
 
 class MovieClip : public DisplayObject {
@@ -172,6 +219,7 @@ public:
     Rect localBounds() const override;
     bool hitTest(const Matrix& m, Point p) const override;
     void forEachChild(const std::function<void(DisplayObject&)>& fn) override;
+    void hashContent(RenderHash& h) override;
 
 private:
     struct PlaceState {
@@ -213,6 +261,7 @@ public:
     Rect localBounds() const override;
     bool hitTest(const Matrix& m, Point p) const override;
     void forEachChild(const std::function<void(DisplayObject&)>& fn) override;
+    void hashContent(RenderHash& h) override { h.add((uint64_t)state_); }
     void advance() override;
 
 private:
@@ -224,10 +273,59 @@ private:
 };
 
 // Renders `obj` under its parent's transform, applying its own matrix, color transform,
-// filters and blend mode (offscreen layers when needed).
+// filters and blend mode (offscreen layers when needed). Only pixels inside `clip` are
+// written, so threads can render disjoint clips of one surface at the same time, after
+// prepareForRender(). `ignoreVisible` draws hidden objects too (masks still mask).
 void renderDisplayObject(DisplayObject& obj, Rasterizer& r, Surface& dst, const IntRect& clip,
                          const Matrix& parentMatrix, const ColorTransform& parentCx,
-                         const Movie& movie);
+                         const Movie& movie, bool ignoreVisible = false);
+
+// Filtered layers rendered into the frame surface `target`, kept across frames: a layer
+// is reused while its object's subtree, transform and the target size are unchanged
+// (by RenderHash), and rendered once per frame otherwise, shared by the threads
+// rendering bands. Only for the frame surface, since temporary mask surfaces can reuse
+// an address within a frame.
+class LayerCache {
+public:
+    struct Layer {
+        std::mutex lock;     // held while the layer is being checked or rendered
+        bool ready = false;  // checked (and rendered if needed) for the current frame
+        bool valid = false;
+        uint64_t hash = 0;
+        Matrix m;
+        int targetWidth = 0, targetHeight = 0;
+        Surface pixels;
+        int x0 = 0, y0 = 0;  // position in the target surface
+        unsigned usedFrame = 0;
+    };
+    Layer& get(const DisplayObject* obj);
+    // Starts a frame rendered into `target`; layers must be checked again before use.
+    void beginFrame(const Surface* target);
+    // Drops the layers of objects that were not drawn this frame.
+    void endFrame();
+
+    const Surface* target = nullptr;
+    unsigned frame = 0;
+    std::atomic<unsigned> reused{0}, rendered{0};  // statistics
+
+private:
+    std::mutex mutex_;
+    std::map<const DisplayObject*, std::unique_ptr<Layer>> layers_;
+};
+
+// Runs fn(i, rasterizer) for every i in [0, n), possibly on several threads, each call
+// with a rasterizer of its own.
+using ParallelRender = std::function<void(int n, const std::function<void(int i, Rasterizer& r)>& fn)>;
+
+// Renders, ahead of a frame's bands, the cached filtered layers that changed, each one
+// with all of `parallel`'s threads (otherwise the first band needing one renders it
+// alone while the others wait). `rootMatrix` must be the matrix the bands render with.
+void prerenderLayers(DisplayObject& root, const Matrix& rootMatrix, const Surface& target, const Movie& movie,
+                     LayerCache& cache, Rasterizer& r, const ParallelRender& parallel);
+
+// Computes everything rendering would otherwise compute lazily (text layout, morph
+// shapes), so rendering itself only reads the display list.
+void prepareForRender(DisplayObject& root);
 
 // Union of two rects, treating empty ones as absent.
 Rect unionRect(const Rect& a, const Rect& b);

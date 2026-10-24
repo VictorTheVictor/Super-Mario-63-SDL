@@ -134,10 +134,14 @@ void MorphShapeCharacter::parse(Reader& r, int version) {
     readShapeRecords(r, 3, false, endRecords);
 }
 
+void MorphShapeCharacter::trimCache() {
+    if (cache_.size() > 256) cache_.clear();
+}
+
 const ShapeDef& MorphShapeCharacter::at(uint16_t ratio) {
+    std::lock_guard<std::mutex> lock(cacheMutex_);
     auto it = cache_.find(ratio);
     if (it != cache_.end()) return it->second;
-    if (cache_.size() > 256) cache_.clear();
 
     double t = ratio / 65535.0;
     ShapeDef def;

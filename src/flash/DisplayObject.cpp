@@ -1,5 +1,6 @@
 #include "flash/DisplayObject.h"
 
+#include <atomic>
 #include <cmath>
 
 #include "flash/Effects.h"
@@ -99,10 +100,100 @@ Rect unionRect(const Rect& a, const Rect& b) {
             std::max(a.yMax, b.yMax)};
 }
 
+namespace {
+
+// The object's filters with sizes converted from stage pixels to device pixels.
+std::vector<Filter> deviceFilters(const DisplayObject& o) {
+    std::vector<Filter> filters = o.filters;
+    for (Filter& f : filters) {
+        f.blurX *= renderSettings.scale;
+        f.blurY *= renderSettings.scale;
+        f.distance *= renderSettings.scale;
+    }
+    return filters;
+}
+
+// The device-space rect an object's layer needs within `limit`, including the filters'
+// reach (`pad`). Empty when there is nothing to draw.
+IntRect layerArea(const DisplayObject& o, const Matrix& m, int pad, const IntRect& limit) {
+    Rect b = m.apply(o.localBounds());
+    if (b.empty() || !std::isfinite(b.xMin) || !std::isfinite(b.yMin) || !std::isfinite(b.xMax) ||
+        !std::isfinite(b.yMax))
+        return {};
+    return {std::max((int)std::floor(b.xMin) - pad, limit.x0 - pad),
+            std::max((int)std::floor(b.yMin) - pad, limit.y0 - pad),
+            std::min((int)std::ceil(b.xMax) + pad, limit.x1 + pad),
+            std::min((int)std::ceil(b.yMax) + pad, limit.y1 + pad)};
+}
+
+// Renders the object's content without its color transform into a layer covering `area`
+// and filters it. With `parallel`, the content is drawn in row strips and the filters in
+// chunks spread over its threads.
+void renderLayer(DisplayObject& o, const Matrix& m, const IntRect& area, const std::vector<Filter>& filters,
+                 Surface& layer, Rasterizer& r, const Movie& movie, const ParallelRender* parallel) {
+    layer.resize(area.x1 - area.x0, area.y1 - area.y0);
+    Matrix lm = Matrix::translate(-area.x0, -area.y0) * m;
+    if (!parallel) {
+        o.render(r, layer, {0, 0, layer.width, layer.height}, lm, ColorTransform{}, movie);
+        applyFilters(layer, filters);
+        return;
+    }
+    int strips = std::max(1, std::min(64, layer.height / 16));
+    (*parallel)(strips, [&](int i, Rasterizer& pr) {
+        IntRect strip{0, layer.height * i / strips, layer.width, layer.height * (i + 1) / strips};
+        o.render(pr, layer, strip, lm, ColorTransform{}, movie);
+    });
+    applyFilters(layer, filters, [&](int n, const std::function<void(int)>& fn) {
+        (*parallel)(n, [&](int i, Rasterizer&) { fn(i); });
+    });
+}
+
+// Brings the cached layer of `o` (drawn with matrix `m` onto the cache's target) up to
+// date for this frame: reused if nothing changed, rendered otherwise.
+LayerCache::Layer& currentLayer(LayerCache& cache, DisplayObject& o, const Matrix& m, const Surface& target,
+                                Rasterizer& r, const Movie& movie, const ParallelRender* parallel) {
+    LayerCache::Layer& cached = cache.get(&o);
+    std::lock_guard<std::mutex> lock(cached.lock);
+    if (cached.ready) return cached;
+    RenderHash h;
+    o.hashForRender(h, false);  // its own matrix is part of `m`
+    h.add((uint64_t)renderSettings.crispBitmaps);
+    bool same = cached.valid && cached.hash == h.h && cached.targetWidth == target.width &&
+                cached.targetHeight == target.height && cached.m.a == m.a && cached.m.b == m.b &&
+                cached.m.c == m.c && cached.m.d == m.d && cached.m.tx == m.tx && cached.m.ty == m.ty;
+    if (same) {
+        cache.reused++;
+    } else {
+        std::vector<Filter> filters = deviceFilters(o);
+        IntRect area = layerArea(o, m, filterPadding(filters), {0, 0, target.width, target.height});
+        cached.pixels = Surface{};
+        if (!area.empty()) renderLayer(o, m, area, filters, cached.pixels, r, movie, parallel);
+        cached.x0 = area.x0;
+        cached.y0 = area.y0;
+        cached.valid = true;
+        cached.hash = h.h;
+        cached.m = m;
+        cached.targetWidth = target.width;
+        cached.targetHeight = target.height;
+        cache.rendered++;
+    }
+    cached.ready = true;
+    cached.usedFrame = cache.frame;
+    return cached;
+}
+
+bool usesCachedLayer(const DisplayObject& o) {
+    for (const Filter& f : o.filters)
+        if (f.type != Filter::ColorMatrix && f.type != Filter::Convolution) return true;  // pads its layer
+    return false;
+}
+
+}  // namespace
+
 void renderDisplayObject(DisplayObject& o, Rasterizer& r, Surface& dst, const IntRect& clip,
                          const Matrix& parentMatrix, const ColorTransform& parentCx,
-                         const Movie& movie) {
-    if (!o.visible) return;
+                         const Movie& movie, bool ignoreVisible) {
+    if (!o.visible && !ignoreVisible) return;
     Matrix m = parentMatrix * o.matrix;
     ColorTransform cx = parentCx * o.cxform;
     bool needsLayer = !o.filters.empty() || o.blendMode >= BlendLayer;
@@ -113,24 +204,115 @@ void renderDisplayObject(DisplayObject& o, Rasterizer& r, Surface& dst, const In
     // Render the object's content without its color transform into an offscreen layer,
     // filter it, then composite it with the color transform and blend mode. The color
     // transform therefore also affects glows and shadows, as in Flash.
-    int pad = filterPadding(o.filters);
-    Rect b = m.apply(o.localBounds());
-    if (b.empty() || !std::isfinite(b.xMin) || !std::isfinite(b.yMin) || !std::isfinite(b.xMax) ||
-        !std::isfinite(b.yMax))
+    uint8_t mode = o.blendMode ? o.blendMode : (uint8_t)BlendNormal;
+    LayerCache* cache = renderSettings.layerCache;
+    if (cache && cache->target == &dst && usesCachedLayer(o)) {
+        // Rendered for the whole target surface, reused by the other bands and, while
+        // nothing in it changes, by later frames.
+        LayerCache::Layer& cached = currentLayer(*cache, o, m, dst, r, movie, nullptr);
+        if (cached.pixels.width) compositeLayer(dst, clip, cached.pixels, cached.x0, cached.y0, mode, cx);
         return;
-    IntRect area{(int)std::floor(b.xMin) - pad, (int)std::floor(b.yMin) - pad,
-                 (int)std::ceil(b.xMax) + pad, (int)std::ceil(b.yMax) + pad};
-    area.x0 = std::max(area.x0, clip.x0 - pad);
-    area.y0 = std::max(area.y0, clip.y0 - pad);
-    area.x1 = std::min(area.x1, clip.x1 + pad);
-    area.y1 = std::min(area.y1, clip.y1 + pad);
+    }
+    std::vector<Filter> filters = deviceFilters(o);
+    IntRect area = layerArea(o, m, filterPadding(filters), clip);
     if (area.empty()) return;
     Surface layer;
-    layer.resize(area.x1 - area.x0, area.y1 - area.y0);
-    o.render(r, layer, {0, 0, layer.width, layer.height},
-             Matrix::translate(-area.x0, -area.y0) * m, ColorTransform{}, movie);
-    applyFilters(layer, o.filters);
-    compositeLayer(dst, clip, layer, area.x0, area.y0, o.blendMode ? o.blendMode : (uint8_t)BlendNormal, cx);
+    renderLayer(o, m, area, filters, layer, r, movie, nullptr);
+    compositeLayer(dst, clip, layer, area.x0, area.y0, mode, cx);
+}
+
+namespace {
+
+// Finds the filtered objects drawn directly onto the frame surface (not inside another
+// layer or a mask), with the matrices rendering will use for them.
+void collectCachedLayers(DisplayObject& o, const Matrix& parentMatrix,
+                         std::vector<std::pair<DisplayObject*, Matrix>>& out) {
+    if (!o.visible) return;
+    Matrix m = parentMatrix * o.matrix;
+    if (!o.filters.empty() || o.blendMode >= BlendLayer) {
+        if (usesCachedLayer(o)) out.push_back({&o, m});
+        return;  // its children draw into its layer
+    }
+    int maskedUntil = -1;
+    o.forEachChild([&](DisplayObject& c) {
+        if (c.clipDepth) {
+            maskedUntil = c.clipDepth;  // the mask and what it masks draw into mask layers
+            return;
+        }
+        if (c.depth <= maskedUntil) return;
+        collectCachedLayers(c, m, out);
+    });
+}
+
+}  // namespace
+
+void prerenderLayers(DisplayObject& root, const Matrix& rootMatrix, const Surface& target, const Movie& movie,
+                     LayerCache& cache, Rasterizer& r, const ParallelRender& parallel) {
+    std::vector<std::pair<DisplayObject*, Matrix>> layers;
+    collectCachedLayers(root, rootMatrix, layers);
+    for (auto& [obj, m] : layers) currentLayer(cache, *obj, m, target, r, movie, &parallel);
+}
+
+LayerCache::Layer& LayerCache::get(const DisplayObject* obj) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& slot = layers_[obj];
+    if (!slot) slot = std::make_unique<Layer>();
+    return *slot;
+}
+
+void LayerCache::beginFrame(const Surface* newTarget) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    target = newTarget;
+    frame++;
+    for (auto& [obj, layer] : layers_) layer->ready = false;
+}
+
+void LayerCache::endFrame() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto it = layers_.begin(); it != layers_.end();)
+        it = it->second->usedFrame == frame ? std::next(it) : layers_.erase(it);
+}
+
+uint64_t nextContentVersion() {
+    static std::atomic<uint64_t> counter{0};
+    return ++counter;
+}
+
+void DisplayObject::hashForRender(RenderHash& h, bool self) {
+    h.add((uint64_t)(def_ ? def_->id : 0xFFFFFFu));
+    if (self) {
+        h.add(matrix);
+        h.add(cxform);
+    }
+    h.add((uint64_t)ratio << 32 | (uint64_t)clipDepth << 16 | (uint64_t)blendMode << 1 | visible);
+    for (const Filter& f : filters) {
+        h.add((uint64_t)f.type << 8 | f.inner << 3 | f.knockout << 2 | f.onTop << 1 | f.compositeSource);
+        for (double v : {f.blurX, f.blurY, f.angle, f.distance, f.strength}) h.add(v);
+        h.add((uint64_t)f.passes);
+        h.add((uint64_t)(f.color.r | f.color.g << 8 | f.color.b << 16 | f.color.a << 24));
+        h.add((uint64_t)(f.highlight.r | f.highlight.g << 8 | f.highlight.b << 16 | f.highlight.a << 24));
+        for (float v : f.matrix) h.add(v);
+    }
+    hashContent(h);
+    forEachChild([&h](DisplayObject& c) {
+        h.add((uint64_t)(int64_t)c.depth);
+        c.hashForRender(h);
+    });
+}
+
+void MovieClip::hashContent(RenderHash& h) {
+    if (hasDrawing()) h.add(drawing_->version);
+}
+
+void prepareForRender(DisplayObject& o) {
+    if (auto* tf = dynamic_cast<TextField*>(&o)) tf->prepareForRender();
+    if (auto* mc = dynamic_cast<MovieClip*>(&o); mc && mc->hasDrawing()) mc->drawing().cachedShape();
+    if (dynamic_cast<MorphObject*>(&o)) {
+        auto* def = static_cast<MorphShapeCharacter*>(o.definition());
+        def->trimCache();
+        def->at(o.ratio);
+    }
+    o.forEachChild([](DisplayObject& c) { prepareForRender(c); });
 }
 
 // ---------------------------------------------------------------- Button
@@ -192,7 +374,7 @@ void ButtonObject::advance() {
 
 // ---------------------------------------------------------------- Drawing
 
-void Drawing::clear() { *this = Drawing{}; }
+void Drawing::clear() { *this = Drawing{}; }  // takes a new version too
 
 bool Drawing::empty() const {
     return shape.layers.empty() && fillEdges.empty() && lineEdges.empty();
@@ -208,6 +390,8 @@ void Drawing::flushLine() {
 }
 
 void Drawing::lineStyle(double widthTwips, Color c) {
+    snapshotValid_ = false;
+    version = nextContentVersion();
     flushLine();
     lining = widthTwips >= 0;
     line = LineStyle{};
@@ -216,6 +400,8 @@ void Drawing::lineStyle(double widthTwips, Color c) {
 }
 
 void Drawing::beginFill(Color c) {
+    snapshotValid_ = false;
+    version = nextContentVersion();
     endFill();
     filling = true;
     fill = FillStyle{};
@@ -224,6 +410,8 @@ void Drawing::beginFill(Color c) {
 }
 
 void Drawing::endFill() {
+    snapshotValid_ = false;
+    version = nextContentVersion();
     if (filling && !fillEdges.empty()) {
         if (pen.x != fillStart.x || pen.y != fillStart.y)
             fillEdges.push_back({pen, {(pen.x + fillStart.x) / 2, (pen.y + fillStart.y) / 2}, fillStart, false});
@@ -238,12 +426,16 @@ void Drawing::endFill() {
 }
 
 void Drawing::moveTo(Point p) {
+    snapshotValid_ = false;
+    version = nextContentVersion();
     flushLine();
     pen = p;
     if (filling && fillEdges.empty()) fillStart = p;
 }
 
 void Drawing::lineTo(Point p) {
+    snapshotValid_ = false;
+    version = nextContentVersion();
     Edge e{pen, {(pen.x + p.x) / 2, (pen.y + p.y) / 2}, p, false};
     if (filling) fillEdges.push_back(e);
     if (lining) lineEdges.push_back(e);
@@ -251,6 +443,8 @@ void Drawing::lineTo(Point p) {
 }
 
 void Drawing::curveTo(Point c, Point p) {
+    snapshotValid_ = false;
+    version = nextContentVersion();
     Edge e{pen, c, p, true};
     if (filling) fillEdges.push_back(e);
     if (lining) lineEdges.push_back(e);
@@ -562,7 +756,7 @@ void MovieClip::advance() {
 
 Rect MovieClip::localBounds() const {
     Rect out;
-    if (hasDrawing()) out = drawing_->snapshot().bounds;
+    if (hasDrawing()) out = drawing_->cachedShape().bounds;
     for (auto& [d, c] : children_) out = unionRect(out, c->matrix.apply(c->localBounds()));
     return out;
 }
@@ -570,7 +764,7 @@ Rect MovieClip::localBounds() const {
 bool MovieClip::hitTest(const Matrix& m, Point p) const {
     // A zero-scale clip has no area; Flash reports no hit (and its children inherit that).
     if (!m.invertible()) return false;
-    if (hasDrawing() && shapeContains(drawing_->snapshot(), m.inverse().apply(p))) return true;
+    if (hasDrawing() && shapeContains(drawing_->cachedShape(), m.inverse().apply(p))) return true;
     // Invisible children still count: games commonly hit-test hidden collision clips.
     // Masks (clipDepth) are not hit themselves, but limit the siblings they cover.
     int maskedUntil = -1;
@@ -601,7 +795,7 @@ void MovieClip::forEachChild(const std::function<void(DisplayObject&)>& fn) {
 
 void MovieClip::render(Rasterizer& r, Surface& dst, const IntRect& clip, const Matrix& m,
                        const ColorTransform& cx, const Movie& movie) {
-    if (hasDrawing()) drawShape(r, dst, clip, drawing_->snapshot(), m, cx, movie);
+    if (hasDrawing()) drawShape(r, dst, clip, drawing_->preparedShape(), m, cx, movie);
     for (auto it = children_.begin(); it != children_.end(); ++it) {
         DisplayObject& c = *it->second;
         if (!c.clipDepth) {
@@ -609,21 +803,28 @@ void MovieClip::render(Rasterizer& r, Surface& dst, const IntRect& clip, const M
             continue;
         }
         // Mask: covers siblings with depth in (c.depth, c.clipDepth]. Render the mask's
-        // coverage and the masked content into stage-sized layers, then combine.
+        // coverage and the masked content into layers the size of the mask's on-screen
+        // bounds, then combine.
+        auto last = std::next(it);
+        while (last != children_.end() && last->first <= c.clipDepth) ++last;
+        auto first = std::next(it);
+        it = std::prev(last);
+        Rect b = (m * c.matrix).apply(c.localBounds());
+        if (b.empty() || !std::isfinite(b.xMin) || !std::isfinite(b.yMin) || !std::isfinite(b.xMax) ||
+            !std::isfinite(b.yMax))
+            continue;
+        IntRect area{std::max(clip.x0, (int)std::floor(b.xMin) - 1), std::max(clip.y0, (int)std::floor(b.yMin) - 1),
+                     std::min(clip.x1, (int)std::ceil(b.xMax) + 1), std::min(clip.y1, (int)std::ceil(b.yMax) + 1)};
+        if (area.empty()) continue;  // nothing of the masked content can show
         Surface mask, content;
-        mask.resize(dst.width, dst.height);
-        content.resize(dst.width, dst.height);
-        bool wasVisible = c.visible;
-        c.visible = true;  // invisible masks still mask
-        renderDisplayObject(c, r, mask, clip, m, ColorTransform{}, movie);
-        c.visible = wasVisible;
-        auto next = std::next(it);
-        while (next != children_.end() && next->first <= c.clipDepth) {
-            renderDisplayObject(*next->second, r, content, clip, m, cx, movie);
-            it = next++;
-        }
+        mask.resize(area.x1 - area.x0, area.y1 - area.y0);
+        content.resize(mask.width, mask.height);
+        IntRect local{0, 0, mask.width, mask.height};
+        Matrix lm = Matrix::translate(-area.x0, -area.y0) * m;
+        renderDisplayObject(c, r, mask, local, lm, ColorTransform{}, movie, true);  // invisible masks still mask
+        for (auto n = first; n != last; ++n) renderDisplayObject(*n->second, r, content, local, lm, cx, movie);
         applyMask(content, mask);
-        compositeLayer(dst, clip, content, 0, 0, BlendNormal, ColorTransform{});
+        compositeLayer(dst, clip, content, area.x0, area.y0, BlendNormal, ColorTransform{});
     }
 }
 

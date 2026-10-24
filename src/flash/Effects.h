@@ -1,6 +1,7 @@
 #pragma once
 // Bitmap filters and blend-mode compositing on premultiplied ARGB layers.
 
+#include <functional>
 #include <vector>
 
 #include "flash/Geom.h"
@@ -18,8 +19,12 @@ enum BlendMode : uint8_t {
 // Extra pixels a filter list can spread content by, per side.
 int filterPadding(const std::vector<Filter>& filters);
 
+// Runs fn(i) for every i in [0, n), possibly in parallel: the calls must be safe to run
+// concurrently. Empty means one call after another on the calling thread.
+using ParallelFor = std::function<void(int n, const std::function<void(int)>& fn)>;
+
 // Applies filters in order. `layer` must already be padded by filterPadding().
-void applyFilters(Surface& layer, const std::vector<Filter>& filters);
+void applyFilters(Surface& layer, const std::vector<Filter>& filters, const ParallelFor& pf = {});
 
 // Composites `layer` (positioned with its top-left at x0,y0 in dst) onto `dst`
 // through the color transform and blend mode, limited to `clip`.

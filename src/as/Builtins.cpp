@@ -3,6 +3,7 @@
 // Display-list classes (MovieClip, TextField, Color, Sound) live in Stage.cpp.
 
 #include "as/Builtins.h"
+#include "as/Deterministic.h"
 
 #include <algorithm>
 #include <cmath>
@@ -25,6 +26,23 @@ std::mt19937& rng() {
     static std::mt19937 g(std::random_device{}());
     return g;
 }
+
+bool g_deterministic = false;
+double g_clockMs = 0;
+
+}  // namespace
+
+void setDeterministic(uint32_t seed) {
+    g_deterministic = true;
+    rng().seed(seed);
+}
+bool deterministic() { return g_deterministic; }
+void advanceClock(double ms) {
+    if (g_deterministic) g_clockMs += ms;
+}
+double deterministicClock() { return g_clockMs; }
+
+namespace {
 
 // ---------------------------------------------------------------- UTF-8 helpers
 

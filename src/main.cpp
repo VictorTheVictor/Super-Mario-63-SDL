@@ -27,6 +27,7 @@
 
 #include "as/Audio.h"
 #include "as/Builtins.h"
+#include "as/Deterministic.h"
 #include "as/Diagnostics.h"
 #include "as/Player.h"
 #include "flash/DisplayObject.h"
@@ -34,6 +35,57 @@
 #include "flash/Effects.h"
 #include "flash/Raster.h"
 #include "flash/Swf.h"
+
+#ifdef __linux__
+#include <dlfcn.h>
+#include <execinfo.h>
+#include <signal.h>
+#include <sys/time.h>
+
+#include <atomic>
+
+// Sampling profiler for --profile: a CPU-time timer signal records the call stack;
+// tools/profile.py turns the saved (module, offset) stacks into a report.
+namespace prof {
+constexpr int kDepth = 32, kMax = 40000;
+void* g_stacks[kMax][kDepth];
+int g_depths[kMax];
+std::atomic<int> g_count{0};
+
+void onSignal(int) {
+    int i = g_count.fetch_add(1);
+    if (i < kMax) g_depths[i] = backtrace(g_stacks[i], kDepth);
+}
+
+void start() {
+    void* warm[4];
+    backtrace(warm, 4);  // loads libgcc's unwinder outside the signal handler
+    signal(SIGPROF, onSignal);
+    itimerval t{{0, 1000}, {0, 1000}};  // every 1 ms of CPU time
+    setitimer(ITIMER_PROF, &t, nullptr);
+}
+
+void stop(const char* path) {
+    itimerval off{};
+    setitimer(ITIMER_PROF, &off, nullptr);
+    FILE* f = std::fopen(path, "w");
+    if (!f) return;
+    int n = std::min(g_count.load(), kMax);
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < g_depths[i]; j++) {
+            Dl_info d;
+            if (!dladdr(g_stacks[i][j], &d) || !d.dli_fname) continue;
+            // Return addresses point after the call; step back into it (except the leaf).
+            uintptr_t off = (uintptr_t)g_stacks[i][j] - (uintptr_t)d.dli_fbase - (j ? 1 : 0);
+            std::fprintf(f, "%s:%lx ", d.dli_fname, (unsigned long)off);
+        }
+        std::fputc('\n', f);
+    }
+    std::fclose(f);
+    std::printf("profile: %d samples written to %s\n", n, path);
+}
+}  // namespace prof
+#endif
 
 using namespace flash;
 
@@ -385,19 +437,29 @@ int main(int argc, char** argv) {
     if (argc < 2) {
         std::fprintf(stderr,
                      "usage: %s <game.swf> [--symbol NAME] [--scale N] [--frames N --screenshot "
-                     "out.bmp] [--stats]\n       %s --selftest out.bmp\n",
+                     "out.bmp [--render-scale X]] [--smooth] [--threads N] [--stats]\n       %s --selftest out.bmp\n",
                      argv[0], argv[0]);
         return 1;
     }
     std::string swfPath = argv[1], symbol, screenshot, watch, inputSpec, calls, courseSpec, treePath, probes,
                 gotoSpec, trackSpec, setSpec, findText;
     int scale = 2, frames = 0, sampleEvery = 0, benchFrom = 0;
+    double renderScale = 1;  // headless output size, in multiples of the stage size
+    int renderThreads = 0;   // 0: one per hardware thread
+    bool noLayerCache = false;
+    std::string profilePath;  // --profile: sample stacks from --bench-from on
     bool stats = false, checkExports = false, mute = false, dump = false, traces = false,
          diagnose = false, bench = false;
     for (int i = 2; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--symbol" && i + 1 < argc) symbol = argv[++i];
         else if (a == "--scale" && i + 1 < argc) scale = std::max(1, std::atoi(argv[++i]));
+        else if (a == "--render-scale" && i + 1 < argc) renderScale = std::max(0.25, std::atof(argv[++i]));
+        else if (a == "--smooth") flash::renderSettings.crispBitmaps = false;
+        else if (a == "--deterministic") as::setDeterministic(63);
+        else if (a == "--no-layer-cache") noLayerCache = true;
+        else if (a == "--profile" && i + 1 < argc) profilePath = argv[++i], bench = true;
+        else if (a == "--threads" && i + 1 < argc) renderThreads = std::max(1, std::atoi(argv[++i]));
         else if (a == "--frames" && i + 1 < argc) frames = std::atoi(argv[++i]);
         else if (a == "--screenshot" && i + 1 < argc) screenshot = argv[++i];
         else if (a == "--stats") stats = true;
@@ -506,12 +568,14 @@ int main(int argc, char** argv) {
         game::registerScripts();
         audioBridge = std::make_unique<as::AudioBridge>(movie, mixer);
         player = std::make_unique<as::Player>(movie);
+        if (renderThreads) player->setRenderThreads(renderThreads);
+        if (noLayerCache) player->setLayerCaching(false);
         player->setAudio(audioBridge.get());
         viewed = &player->root();
     }
 
     Surface surf;
-    surf.resize(W, H);
+    surf.resize((int)std::lround(W * renderScale), (int)std::lround(H * renderScale));
     Rasterizer rast;
     const Color bg = movie.background;
     auto renderFrame = [&]() {
@@ -520,8 +584,10 @@ int main(int argc, char** argv) {
             return;
         }
         surf.clear(0xFF000000u | bg.r << 16 | bg.g << 8 | bg.b);
-        renderDisplayObject(*symbolStage, rast, surf, {0, 0, W, H}, Matrix::scale(0.05, 0.05),
-                            ColorTransform{}, movie);
+        double s = (double)surf.width / W;
+        renderSettings.scale = s;
+        renderDisplayObject(*symbolStage, rast, surf, {0, 0, surf.width, surf.height},
+                            Matrix::scale(0.05 * s, 0.05 * s), ColorTransform{}, movie);
     };
     auto tick = [&]() {
         if (player) player->tick();
@@ -537,6 +603,9 @@ int main(int argc, char** argv) {
         std::vector<InputEvent> events = parseInput(inputSpec);
         std::vector<double> tickMs, renderMs;
         for (int i = 0; i < frames; i++) {
+#ifdef __linux__
+            if (!profilePath.empty() && i == benchFrom) prof::start();
+#endif
             if (player)
                 for (const InputEvent& e : events) {
                     if (e.frame != i) continue;
@@ -624,6 +693,9 @@ int main(int argc, char** argv) {
                 tickMs.push_back((t1 - t0) * 1000.0 / SDL_GetPerformanceFrequency());
             }
         }
+#ifdef __linux__
+        if (!profilePath.empty()) prof::stop(profilePath.c_str());
+#endif
         if (bench && !tickMs.empty()) {
             auto stats = [](std::vector<double> v, const char* what) {
                 std::sort(v.begin(), v.end());
@@ -636,7 +708,7 @@ int main(int argc, char** argv) {
             stats(renderMs, "render");
             std::printf("rasterizer: %zu non-finite segments rejected, %zu out-of-range rows clamped "
                         "(max overshoot %.3g px)\n",
-                        Rasterizer::rejectedSegments, Rasterizer::clampedRows, Rasterizer::maxOvershoot);
+                        Rasterizer::rejectedSegments.load(), Rasterizer::clampedRows.load(), Rasterizer::maxOvershoot.load());
         }
         if (diagnose) as::diagnostics().print(stdout);
         if (dump && player) {
@@ -732,11 +804,25 @@ int main(int argc, char** argv) {
     }
     SDL_Window* win = SDL_CreateWindow("Super Mario 63", SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, W * scale, H * scale,
-                                       SDL_WINDOW_RESIZABLE);
+                                       SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_PRESENTVSYNC);
-    SDL_RenderSetLogicalSize(ren, W, H);  // also maps mouse events to stage pixels
-    SDL_Texture* tex =
-        SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, W, H);
+    SDL_RenderSetLogicalSize(ren, W, H);  // letterboxes, and maps mouse events to stage pixels
+    SDL_Texture* tex = nullptr;
+    // The frame is rendered at the letterboxed viewport's real pixel size, so vector art
+    // stays sharp in a large or fullscreen window.
+    auto fitSurface = [&]() {
+        int ow = W, oh = H;
+        SDL_GetRendererOutputSize(ren, &ow, &oh);
+        double s = std::max(0.25, std::min((double)ow / W, (double)oh / H));
+        int sw = std::max(1, (int)(W * s)), sh = std::max(1, (int)(H * s));
+        if (tex && sw == surf.width && sh == surf.height) return false;
+        if (tex) SDL_DestroyTexture(tex);
+        surf.resize(sw, sh);
+        tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, sw, sh);
+        SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);  // already 1:1; avoid rounding blur
+        return true;
+    };
+    bool redraw = true;  // the frame changed since it was last rendered
 
     // Audio output: the mixer runs on SDL's audio thread.
     SDL_AudioDeviceID audioDevice = 0;
@@ -767,6 +853,17 @@ int main(int argc, char** argv) {
                 switch (e.type) {
                     case SDL_KEYDOWN:
                         if (e.key.keysym.sym == SDLK_ESCAPE && (e.key.keysym.mod & KMOD_SHIFT)) running = false;
+                        // Port-only shortcuts, not passed to the game.
+                        if (e.key.keysym.sym == SDLK_F11 && !e.key.repeat) {
+                            bool full = SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP;
+                            SDL_SetWindowFullscreen(win, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                            break;
+                        }
+                        if (e.key.keysym.sym == SDLK_F2 && !e.key.repeat) {
+                            renderSettings.crispBitmaps = !renderSettings.crispBitmaps;
+                            redraw = true;
+                            break;
+                        }
                         if (!e.key.repeat) {
                             int code = flashKeyCode(e.key.keysym.sym);
                             if (code) player->keyDown(code, flashAscii(e.key.keysym));
@@ -795,6 +892,7 @@ int main(int argc, char** argv) {
                     case SDLK_LEFT: viewed->gotoFrame(viewed->currentFrame() - 1, false); break;
                     default: break;
                 }
+                redraw = true;
                 char title[96];
                 std::snprintf(title, sizeof title, "Super Mario 63 — frame %d/%d%s",
                               viewed->currentFrame(), viewed->totalFrames(),
@@ -812,8 +910,13 @@ int main(int argc, char** argv) {
             steps++;
         }
         if (steps == 4) acc = 0;
-        renderFrame();
-        SDL_UpdateTexture(tex, nullptr, surf.pixels.data(), W * 4);
+        // Render only when the game advanced (32 fps) or the window size changed; the
+        // display may refresh more often than that.
+        if (fitSurface() || steps || redraw) {
+            renderFrame();
+            SDL_UpdateTexture(tex, nullptr, surf.pixels.data(), surf.width * 4);
+            redraw = false;
+        }
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, nullptr, nullptr);
         SDL_RenderPresent(ren);

@@ -2,6 +2,7 @@
 // Software rasterizer: anti-aliased nonzero fills via signed-area accumulation,
 // with solid, gradient and bitmap paints. Output is premultiplied 0xAARRGGBB.
 
+#include <atomic>
 #include <cstdint>
 #include <vector>
 
@@ -30,6 +31,22 @@ struct IntRect {
     bool empty() const { return x1 <= x0 || y1 <= y0; }
 };
 
+class LayerCache;
+
+// Settings for the frame being rendered.
+struct RenderSettings {
+    // Device pixels per stage pixel. Filters and minimum line widths are specified in
+    // stage pixels, so they scale with this.
+    double scale = 1;
+    // Bitmaps drawn larger than their native size sample the nearest texel (crisp,
+    // pixel-art look) instead of filtering bilinearly.
+    bool crispBitmaps = true;
+    // When set, filtered layers are rendered once per frame and shared between the
+    // threads rendering bands of it (instead of each band redoing its padded strip).
+    LayerCache* layerCache = nullptr;
+};
+extern RenderSettings renderSettings;
+
 // Everything needed to color a covered pixel.
 struct Paint {
     const FillStyle* style = nullptr;  // null => solid `color`
@@ -46,11 +63,11 @@ public:
     // so scan conversion never indexes outside its buffer.
     void line(Point a, Point b);
     // Segments rejected because of NaN/infinite coordinates (diagnostics).
-    static size_t rejectedSegments;
+    static std::atomic<size_t> rejectedSegments;
     // Rows whose interpolated x fell outside the buffer before clamping (would have
     // written out of bounds without the clamp).
-    static size_t clampedRows;
-    static double maxOvershoot;  // largest distance outside [0, width] seen, in pixels
+    static std::atomic<size_t> clampedRows;
+    static std::atomic<double> maxOvershoot;  // largest distance outside [0, width] seen, in pixels
     void quad(Point a, Point c, Point b);  // flattened quadratic Bezier
     void closedPolygon(const Point* pts, int n);
     bool hasGeometry() const { return !segs_.empty(); }
@@ -68,7 +85,8 @@ private:
         double x0, y0, x1, y1;
     };
     std::vector<Seg> segs_;
-    std::vector<float> acc_;
+    std::vector<float> acc_;           // coverage accumulation; all zero between fills
+    std::vector<int> rowMin_, rowMax_;  // touched cell range per row of the current fill
 };
 
 // Draws a whole shape definition with the given transform.

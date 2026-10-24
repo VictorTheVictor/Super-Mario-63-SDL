@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdio>
 
+#include "as/Deterministic.h"
 #include "as/Diagnostics.h"
 
 namespace as {
@@ -38,6 +39,7 @@ Runtime::Runtime() {
 }
 
 double Runtime::timeMs() const {
+    if (deterministic()) return deterministicClock();
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - kStart).count();
 }
 

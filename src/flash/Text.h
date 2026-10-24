@@ -95,6 +95,10 @@ public:
     void setText(const std::string& plain);
     void setHtmlText(const std::string& html);
     bool html() const { return html_; }
+    void hashContent(RenderHash& h) override;
+    void prepareForRender() {
+        if (dirty_) layout();
+    }
 
     Rect bounds;  // twips, local
     std::string variable;  // bound variable path ("score", "_root.lives")
@@ -160,6 +164,7 @@ private:
     std::vector<PlacedGlyph> glyphs_;
     std::vector<LineInfo> lines_;
     bool dirty_ = true;
+    uint64_t layoutVersion_ = 0;  // nextContentVersion() of the last layout
 };
 
 // Fills all of a glyph's paths with a solid color.

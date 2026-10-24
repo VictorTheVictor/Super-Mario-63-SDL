@@ -5,6 +5,7 @@
 
 #include "as/Audio.h"
 #include "as/Builtins.h"
+#include "as/Deterministic.h"
 
 namespace as {
 
@@ -218,6 +219,7 @@ void Player::broadcastEvent(uint32_t event) {
 
 void Player::tick() {
     Runtime& rt = Runtime::get();
+    advanceClock(1000.0 / movie_.frameRate);
     for (auto& mc : liveClips()) {
         if (isRemoved(mc.get())) continue;  // removed earlier in this pass
         queue(*mc, Kind::Event, clipevent::EnterFrame);
@@ -235,8 +237,34 @@ void Player::tick() {
 void Player::render(flash::Rasterizer& r, flash::Surface& dst) {
     flash::Color bg = movie_.background;
     dst.clear(0xFF000000u | bg.r << 16 | bg.g << 8 | bg.b);
-    flash::renderDisplayObject(*root_, r, dst, {0, 0, dst.width, dst.height}, flash::Matrix::scale(0.05, 0.05),
-                               flash::ColorTransform{}, movie_);
+    // The surface may be larger than the stage: scale everything to fill its width.
+    double stageWidth = (movie_.stageRect.xMax - movie_.stageRect.xMin) / 20;
+    double scale = stageWidth > 0 ? dst.width / stageWidth : 1;
+    flash::renderSettings.scale = scale;
+    flash::prepareForRender(*root_);
+    if (!renderPool_) setRenderThreads(flash::WorkerPool::defaultThreads());
+    // More bands than threads, so a thread finishing a cheap band takes another.
+    int threads = renderPool_->size();
+    int bands = threads == 1 ? 1 : std::min(threads * 3, std::max(1, dst.height / 8));
+    flash::Matrix m = flash::Matrix::scale(0.05 * scale, 0.05 * scale);
+    layerCache_.beginFrame(&dst);
+    flash::renderSettings.layerCache = layerCaching_ ? &layerCache_ : nullptr;
+    if (layerCaching_)
+        flash::prerenderLayers(*root_, m, dst, movie_, layerCache_, r, [&](int n, const auto& fn) {
+            renderPool_->run(n, [&](int i, int worker) { fn(i, worker == 0 ? r : rasterizers_[worker - 1]); });
+        });
+    renderPool_->run(bands, [&](int band, int worker) {
+        flash::IntRect clip{0, dst.height * band / bands, dst.width, dst.height * (band + 1) / bands};
+        flash::Rasterizer& rast = worker == 0 ? r : rasterizers_[worker - 1];
+        flash::renderDisplayObject(*root_, rast, dst, clip, m, flash::ColorTransform{}, movie_);
+    });
+    flash::renderSettings.layerCache = nullptr;
+    layerCache_.endFrame();
+}
+
+void Player::setRenderThreads(int n) {
+    renderPool_ = std::make_unique<flash::WorkerPool>(std::max(1, n));
+    rasterizers_.resize(renderPool_->size() - 1);
 }
 
 // ---------------------------------------------------------------- text bindings

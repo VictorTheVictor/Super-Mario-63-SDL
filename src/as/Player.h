@@ -12,6 +12,7 @@
 #include "as/Stage.h"
 #include "flash/DisplayObject.h"
 #include "flash/Text.h"
+#include "flash/WorkerPool.h"
 
 namespace as {
 
@@ -24,7 +25,12 @@ public:
 
     // Advances one frame (enterFrame events, timelines, queued scripts, intervals).
     void tick();
+    // Renders the stage scaled to fill `dst`'s width, split into bands across threads.
     void render(flash::Rasterizer& r, flash::Surface& dst);
+    // Render threads, including the caller (default: the machine's hardware threads).
+    void setRenderThreads(int n);
+    // Keeping filtered layers between frames (on by default; off for comparisons).
+    void setLayerCaching(bool on) { layerCaching_ = on; }
     flash::MovieClip& root() { return *root_; }
 
     // Input, in Flash key codes and stage pixels.
@@ -106,6 +112,10 @@ private:
         bool initialized = false;
     };
     std::vector<Binding> bindings_;
+    std::unique_ptr<flash::WorkerPool> renderPool_;
+    std::vector<flash::Rasterizer> rasterizers_;  // one per render thread but the caller
+    flash::LayerCache layerCache_;
+    bool layerCaching_ = true;
     void syncBinding(Binding& b);
     std::weak_ptr<flash::DisplayObject> hover_, pressed_;
     std::set<std::pair<uint16_t, uint32_t>> missing_;

@@ -13,7 +13,19 @@ inline uint32_t premultiply(Color c) {
     return a << 24 | r << 16 | g << 8 | b;
 }
 
+// Multiplies all four channels by k/255 (rounded), two channels per 32-bit lane.
+inline uint32_t scale255(uint32_t p, uint32_t k) {
+    uint32_t rb = (p & 0x00FF00FFu) * k;
+    uint32_t ag = (p >> 8 & 0x00FF00FFu) * k;
+    rb = (rb + 0x00800080u + (rb >> 8 & 0x00FF00FFu)) >> 8 & 0x00FF00FFu;
+    ag = (ag + 0x00800080u + (ag >> 8 & 0x00FF00FFu)) & 0xFF00FF00u;
+    return rb | ag;
+}
+
 inline uint32_t applyCxPremul(const ColorTransform& cx, uint32_t p) {
+    if (cx.rMul == 1 && cx.gMul == 1 && cx.bMul == 1 && cx.rAdd == 0 && cx.gAdd == 0 && cx.bAdd == 0 &&
+        cx.aAdd == 0 && cx.aMul >= 0 && cx.aMul <= 1)
+        return scale255(p, (uint32_t)(cx.aMul * 255 + 0.5f));  // fades: premultiplied scale
     uint32_t a = p >> 24;
     if (a == 0 && cx.aAdd <= 0) return 0;
     Color c;
@@ -26,23 +38,29 @@ inline uint32_t applyCxPremul(const ColorTransform& cx, uint32_t p) {
     return premultiply(applyCx(cx, c));
 }
 
-// src-over with coverage (0..256)
+// src-over of premultiplied `s` with coverage (0..256)
 inline void blend(uint32_t& d, uint32_t s, uint32_t cov) {
-    if (cov >= 256 && (s >> 24) == 255) {
+    if (cov < 256) {
+        // Scale by coverage: channels stay <= alpha, so the sum below cannot carry.
+        s = ((s & 0x00FF00FFu) * cov >> 8 & 0x00FF00FFu) | ((s >> 8 & 0x00FF00FFu) * cov & 0xFF00FF00u);
+    } else if ((s >> 24) == 255) {
         d = s;
         return;
     }
-    uint32_t sa = ((s >> 24) * cov) >> 8;
-    uint32_t sr = ((s >> 16 & 255) * cov) >> 8;
-    uint32_t sg = ((s >> 8 & 255) * cov) >> 8;
-    uint32_t sb = ((s & 255) * cov) >> 8;
-    uint32_t inv = 255 - sa;
-    uint32_t da = (d >> 24) * inv / 255 + sa;
-    uint32_t dr = (d >> 16 & 255) * inv / 255 + sr;
-    uint32_t dg = (d >> 8 & 255) * inv / 255 + sg;
-    uint32_t db = (d & 255) * inv / 255 + sb;
-    d = std::min(da, 255u) << 24 | std::min(dr, 255u) << 16 | std::min(dg, 255u) << 8 |
-        std::min(db, 255u);
+    d = s + scale255(d, 255 - (s >> 24));
+}
+
+// floor() for values well inside the int range, without a libm call.
+inline int floorInt(double v) {
+    int i = (int)v;
+    return i - (v < i);
+}
+
+// Wraps t into [0, n) for repeating bitmaps; `invN` is 1.0 / n.
+inline int wrapIndex(int t, int n, double invN) {
+    if ((unsigned)t < (unsigned)n) return t;
+    t -= floorInt(t * invN) * n;
+    return t < 0 ? t + n : t >= n ? t - n : t;
 }
 
 void buildRamp(const FillStyle& f, const ColorTransform& cx, uint32_t ramp[256]) {
@@ -82,10 +100,8 @@ inline int spreadIndex(double t, uint8_t spread) {
 
 inline uint32_t texel(const Bitmap& b, int x, int y, bool repeat) {
     if (repeat) {
-        x %= b.width;
-        y %= b.height;
-        if (x < 0) x += b.width;
-        if (y < 0) y += b.height;
+        x = wrapIndex(x, b.width, 1.0 / b.width);
+        y = wrapIndex(y, b.height, 1.0 / b.height);
     } else {
         x = x < 0 ? 0 : x >= b.width ? b.width - 1 : x;
         y = y < 0 ? 0 : y >= b.height ? b.height - 1 : y;
@@ -96,8 +112,8 @@ inline uint32_t texel(const Bitmap& b, int x, int y, bool repeat) {
 inline uint32_t sampleBilinear(const Bitmap& b, double u, double v, bool repeat) {
     u -= 0.5;
     v -= 0.5;
-    double fu = std::floor(u), fv = std::floor(v);
-    int x = (int)fu, y = (int)fv;
+    int x = floorInt(u), y = floorInt(v);
+    double fu = x, fv = y;
     uint32_t wx = (uint32_t)((u - fu) * 256), wy = (uint32_t)((v - fv) * 256);
     uint32_t p00 = texel(b, x, y, repeat), p10 = texel(b, x + 1, y, repeat);
     uint32_t p01 = texel(b, x, y + 1, repeat), p11 = texel(b, x + 1, y + 1, repeat);
@@ -113,7 +129,10 @@ inline uint32_t sampleBilinear(const Bitmap& b, double u, double v, bool repeat)
     return out;
 }
 
-void accumulate(float* acc, int stride, int h, double x0, double y0, double x1, double y1) {
+// Adds a line's signed area coverage to the accumulation rows, widening each touched
+// row's [rowMin, rowMax] cell range.
+void accumulate(float* acc, int stride, int h, int* rowMin, int* rowMax, double x0, double y0, double x1,
+                double y1) {
     if (y0 == y1) return;
     double dir = 1;
     if (y0 > y1) {
@@ -135,7 +154,9 @@ void accumulate(float* acc, int stride, int h, double x0, double y0, double x1, 
         if (x < 0 || xn < 0 || x > stride - 2 || xn > stride - 2) {
             Rasterizer::clampedRows++;
             double over = std::max({-x, -xn, x - (stride - 2), xn - (stride - 2)});
-            Rasterizer::maxOvershoot = std::max(Rasterizer::maxOvershoot, over);
+            double seen = Rasterizer::maxOvershoot.load(std::memory_order_relaxed);
+            while (over > seen && !Rasterizer::maxOvershoot.compare_exchange_weak(seen, over)) {
+            }
         }
         x = std::clamp(x, 0.0, (double)(stride - 2));
         xn = std::clamp(xn, 0.0, (double)(stride - 2));
@@ -145,6 +166,8 @@ void accumulate(float* acc, int stride, int h, double x0, double y0, double x1, 
         int xai = (int)xaf;
         double xbc = std::ceil(xb);
         int xbi = (int)xbc;
+        rowMin[y] = std::min(rowMin[y], xai);
+        rowMax[y] = std::max(rowMax[y], std::max(xbi, xai + 1));
         if (xbi <= xai + 1) {
             double xmf = 0.5 * (x + xn) - xaf;
             row[xai] += (float)(d - d * xmf);
@@ -173,9 +196,11 @@ void accumulate(float* acc, int stride, int h, double x0, double y0, double x1, 
 
 }  // namespace
 
-size_t Rasterizer::rejectedSegments = 0;
-size_t Rasterizer::clampedRows = 0;
-double Rasterizer::maxOvershoot = 0;
+RenderSettings renderSettings;
+
+std::atomic<size_t> Rasterizer::rejectedSegments{0};
+std::atomic<size_t> Rasterizer::clampedRows{0};
+std::atomic<double> Rasterizer::maxOvershoot{0};
 
 void Rasterizer::line(Point a, Point b) {
     if (!std::isfinite(a.x) || !std::isfinite(a.y) || !std::isfinite(b.x) || !std::isfinite(b.y)) {
@@ -286,14 +311,18 @@ void Rasterizer::fill(Surface& dst, const IntRect& clip, const Paint& paint) {
         return;
     }
     int bw = bb.x1 - bb.x0, bh = bb.y1 - bb.y0, stride = bw + 2;
-    acc_.assign((size_t)stride * bh, 0.f);
+    // acc_ is all zeros between fills (rows are cleared as they are painted), so it only
+    // needs to grow, not to be cleared for the whole box.
+    if (acc_.size() < (size_t)stride * bh) acc_.resize((size_t)stride * bh, 0.f);
+    rowMin_.assign(bh, stride);
+    rowMax_.assign(bh, -1);
 
     // Clip horizontally to [0, bw]; parts outside collapse onto the border, which keeps
     // the winding contribution for pixels inside.
     auto emit = [&](double x0, double y0, double x1, double y1) {
         x0 = std::clamp(x0, 0.0, (double)bw);
         x1 = std::clamp(x1, 0.0, (double)bw);
-        accumulate(acc_.data(), stride, bh, x0, y0, x1, y1);
+        accumulate(acc_.data(), stride, bh, rowMin_.data(), rowMax_.data(), x0, y0, x1, y1);
     };
     for (const Seg& s : segs_) {
         double x0 = s.x0 - bb.x0, y0 = s.y0 - bb.y0, x1 = s.x1 - bb.x0, y1 = s.y1 - bb.y0;
@@ -315,72 +344,136 @@ void Rasterizer::fill(Surface& dst, const IntRect& clip, const Paint& paint) {
     }
     segs_.clear();
 
-    // Paint setup.
+    // Paint setup. A sampler gives the color of consecutive pixels along a row:
+    // row(x, py) positions it at pixel x, step() moves one pixel right, color() samples.
     const FillStyle* fs = paint.style;
-    uint32_t solid = 0;
-    uint32_t ramp[256];
-    Matrix inv;
     const Bitmap* bmp = paint.bitmap;
-    bool repeat = false, smooth = false, identityCx = paint.cxform.isIdentity();
-    enum { kSolid, kLinear, kRadial, kBitmap } mode = kSolid;
+    bool identityCx = paint.cxform.isIdentity();
+    auto paintRows = [&](auto& sampler) {
+        for (int y = 0; y < bh; y++) {
+            int x0 = rowMin_[y], x1 = rowMax_[y];
+            if (x0 > x1) continue;  // nothing touched this row
+            float* row = acc_.data() + (size_t)y * stride;
+            uint32_t* out = dst.pixels.data() + (size_t)(bb.y0 + y) * dst.width + bb.x0;
+            float sum = 0;
+            sampler.row(bb.x0 + x0, bb.y0 + y + 0.5);
+            for (int x = x0; x < bw; x++, sampler.step()) {
+                sum += row[x];
+                float a = std::fabs(sum);
+                uint32_t cov = a >= 1.f ? 256 : (uint32_t)(a * 256.f);
+                if (cov < 2) {
+                    if (x > x1) break;  // past the last edge: the rest of the row is empty
+                    continue;
+                }
+                uint32_t c = sampler.color();
+                if (c >> 24) blend(out[x], c, cov);
+            }
+            std::fill(row + x0, row + std::min(x1 + 1, stride), 0.f);
+        }
+    };
+    auto clearRows = [&] {
+        for (int y = 0; y < bh; y++)
+            if (rowMin_[y] <= rowMax_[y]) {
+                float* row = acc_.data() + (size_t)y * stride;
+                std::fill(row + rowMin_[y], row + std::min(rowMax_[y] + 1, stride), 0.f);
+            }
+    };
+
     if (!fs || fs->type == FillStyle::Solid) {
-        solid = premultiply(applyCx(paint.cxform, fs ? fs->color : paint.color));
-    } else if (fs->isGradient()) {
+        struct {
+            uint32_t c;
+            void row(int, double) {}
+            void step() {}
+            uint32_t color() const { return c; }
+        } solid{premultiply(applyCx(paint.cxform, fs ? fs->color : paint.color))};
+        if (solid.c >> 24) paintRows(solid);
+        else clearRows();
+        return;
+    }
+    // Samplers evaluate the fill's inverse matrix at each pixel center exactly as
+    // inv.apply(px, py) would (accumulating per-pixel steps instead drifts and flips
+    // texels that sit exactly on a pixel boundary).
+    if (fs->isGradient()) {
+        uint32_t ramp[256];
         buildRamp(*fs, paint.cxform, ramp);
-        inv = (paint.toDevice * fs->matrix).inverse();
-        mode = fs->type == FillStyle::LinearGradient ? kLinear : kRadial;
-    } else if (fs->isBitmap() && bmp && bmp->width > 0 && bmp->height > 0) {
-        // Bitmap fill matrices map bitmap pixels to twips.
-        inv = (paint.toDevice * fs->matrix).inverse();
-        repeat = fs->type == FillStyle::RepeatingBitmap || fs->type == FillStyle::RepeatingBitmapHard;
-        smooth = fs->type == FillStyle::RepeatingBitmap || fs->type == FillStyle::ClippedBitmap;
-        mode = kBitmap;
-    } else {
+        Matrix inv = (paint.toDevice * fs->matrix).inverse();
+        bool linear = fs->type == FillStyle::LinearGradient;
+        struct {
+            const Matrix& inv;
+            const uint32_t* ramp;
+            uint8_t spread;
+            bool linear;
+            double px = 0, py = 0;
+            void row(int x, double y) {
+                px = x + 0.5;
+                py = y;
+            }
+            void step() { px += 1; }
+            uint32_t color() const {
+                double gx = inv.a * px + inv.c * py + inv.tx;
+                if (linear) return ramp[spreadIndex((gx + 16384) / 32768, spread)];
+                double gy = inv.b * px + inv.d * py + inv.ty;
+                return ramp[spreadIndex(std::sqrt(gx * gx + gy * gy) / 16384, spread)];
+            }
+        } gradient{inv, ramp, fs->spread, linear};
+        paintRows(gradient);
+        return;
+    }
+    if (!fs->isBitmap() || !bmp || bmp->width <= 0 || bmp->height <= 0) {
+        clearRows();
         return;  // missing bitmap: nothing to draw (drawShape normally skips these)
     }
-
-    for (int y = 0; y < bh; y++) {
-        float* row = acc_.data() + (size_t)y * stride;
-        uint32_t* out = dst.pixels.data() + (size_t)(bb.y0 + y) * dst.width + bb.x0;
-        float sum = 0;
-        double py = bb.y0 + y + 0.5;
-        for (int x = 0; x < bw; x++) {
-            sum += row[x];
-            float a = std::fabs(sum);
-            uint32_t cov = a >= 1.f ? 256 : (uint32_t)(a * 256.f);
-            if (cov < 2) continue;
-            double px = bb.x0 + x + 0.5;
-            uint32_t c = solid;
-            switch (mode) {
-                case kSolid:
-                    break;
-                case kLinear: {
-                    double gx = inv.a * px + inv.c * py + inv.tx;
-                    c = ramp[spreadIndex((gx + 16384) / 32768, fs->spread)];
-                    break;
-                }
-                case kRadial: {
-                    double gx = inv.a * px + inv.c * py + inv.tx;
-                    double gy = inv.b * px + inv.d * py + inv.ty;
-                    c = ramp[spreadIndex(std::sqrt(gx * gx + gy * gy) / 16384, fs->spread)];
-                    break;
-                }
-                case kBitmap: {
-                    double u = inv.a * px + inv.c * py + inv.tx;
-                    double v = inv.b * px + inv.d * py + inv.ty;
-                    c = smooth ? sampleBilinear(*bmp, u, v, repeat)
-                               : texel(*bmp, (int)std::floor(u), (int)std::floor(v), repeat);
-                    if (!identityCx) c = applyCxPremul(paint.cxform, c);
-                    break;
-                }
-            }
-            if (c >> 24) blend(out[x], c, cov);
+    // Bitmap fill matrices map bitmap pixels to twips.
+    Matrix inv = (paint.toDevice * fs->matrix).inverse();
+    bool repeat = fs->type == FillStyle::RepeatingBitmap || fs->type == FillStyle::RepeatingBitmapHard;
+    bool smooth = fs->type == FillStyle::RepeatingBitmap || fs->type == FillStyle::ClippedBitmap;
+    // Magnified: one device pixel spans less than one texel.
+    if (renderSettings.crispBitmaps && std::fabs(inv.a * inv.d - inv.b * inv.c) < 1) smooth = false;
+    struct {
+        const Matrix& inv;
+        const Bitmap& bmp;
+        bool repeat, smooth, identityCx;
+        const ColorTransform& cx;
+        double invW, invH;
+        double px = 0, py = 0;
+        void row(int x, double y) {
+            px = x + 0.5;
+            py = y;
         }
-    }
+        void step() { px += 1; }
+        uint32_t color() const {
+            double u = inv.a * px + inv.c * py + inv.tx;
+            double v = inv.b * px + inv.d * py + inv.ty;
+            uint32_t c;
+            if (smooth) {
+                c = sampleBilinear(bmp, u, v, repeat);
+            } else {
+                int tx = floorInt(u), ty = floorInt(v);
+                if (repeat) {
+                    tx = wrapIndex(tx, bmp.width, invW);
+                    ty = wrapIndex(ty, bmp.height, invH);
+                } else {
+                    tx = std::clamp(tx, 0, bmp.width - 1);
+                    ty = std::clamp(ty, 0, bmp.height - 1);
+                }
+                c = bmp.pixels[(size_t)ty * bmp.width + tx];
+            }
+            return identityCx ? c : applyCxPremul(cx, c);
+        }
+    } bitmap{inv, *bmp, repeat, smooth, identityCx, paint.cxform, 1.0 / bmp->width, 1.0 / bmp->height};
+    paintRows(bitmap);
 }
 
 void drawShape(Rasterizer& r, Surface& dst, const IntRect& clip, const ShapeDef& shape,
                const Matrix& m, const ColorTransform& cx, const Movie& movie) {
+    const Rect& sb = shape.bounds;
+    if (!sb.empty()) {
+        Rect b = m.apply(sb);
+        // Bounds include stroke widths; allow for hairlines and antialiasing.
+        double pad = 1 + renderSettings.scale;
+        if (b.xMax + pad < clip.x0 || b.xMin - pad > clip.x1 || b.yMax + pad < clip.y0 || b.yMin - pad > clip.y1)
+            return;
+    }
     double scale = std::sqrt(std::fabs(m.a * m.d - m.b * m.c));
     for (const auto& layer : shape.layers) {
         for (const FillPath& fp : layer.fills) {
@@ -404,8 +497,8 @@ void drawShape(Rasterizer& r, Surface& dst, const IntRect& clip, const ShapeDef&
         for (const StrokePath& sp : layer.strokes) {
             if (sp.style < 0 || sp.style >= (int)shape.lines.size()) continue;
             const LineStyle& ls = shape.lines[sp.style];
-            double w = ls.width * ((ls.noHScale || ls.noVScale) ? 0.05 : scale);
-            double hw = std::max(0.5, w / 2);
+            double w = ls.width * ((ls.noHScale || ls.noVScale) ? 0.05 * renderSettings.scale : scale);
+            double hw = std::max(0.5 * renderSettings.scale, w / 2);
             r.reset();
             for (const auto& pl : sp.polylines) r.addStroke(pl, m, hw);
             Paint p;
