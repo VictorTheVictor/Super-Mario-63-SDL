@@ -289,6 +289,70 @@ Matrix DisplayObject::drawMatrix() const {
     return {l(a.a, b.a), l(a.b, b.b), l(a.c, b.c), l(a.d, b.d), l(a.tx, b.tx), l(a.ty, b.ty)};
 }
 
+namespace {
+
+struct DebugOverlay {
+    enum Kind { Mesh, Clip, Text, Button, Mask, Hidden, KindCount };
+    Rasterizer passes[KindCount];
+
+    void outline(Kind k, const std::vector<Edge>& edges, const Matrix& m, double halfWidth) {
+        passes[k].addStroke(edges, m, halfWidth);
+    }
+    void shape(const ShapeDef& s, const Matrix& m, bool hidden) {
+        for (const auto& layer : s.layers) {
+            for (const FillPath& fp : layer.fills) outline(hidden ? Hidden : Mesh, fp.edges, m, 0.5);
+            for (const StrokePath& sp : layer.strokes)
+                for (const auto& pl : sp.polylines) outline(hidden ? Hidden : Mesh, pl, m, 0.5);
+        }
+    }
+    void box(Kind k, const Rect& b, const Matrix& m) {
+        if (b.empty() || !std::isfinite(b.xMin) || !std::isfinite(b.yMax)) return;
+        Point c[4] = {{b.xMin, b.yMin}, {b.xMax, b.yMin}, {b.xMax, b.yMax}, {b.xMin, b.yMax}};
+        std::vector<Edge> edges;
+        for (int i = 0; i < 4; i++) edges.push_back({c[i], c[i], c[(i + 1) % 4], false});
+        outline(k, edges, m, 0.7);
+    }
+    void visit(DisplayObject& o, const Matrix& parent, bool hidden) {
+        Matrix m = parent * o.drawMatrix();
+        hidden = hidden || !o.visible;
+        if (!m.invertible()) return;
+        const ShapeDef* s = nullptr;
+        if (o.definition() && o.definition()->kind == Character::Shape)
+            s = &static_cast<ShapeCharacter*>(o.definition())->def;
+        else if (dynamic_cast<MorphObject*>(&o))
+            s = &static_cast<MorphShapeCharacter*>(o.definition())->at(o.ratio);
+        else if (auto* mc = dynamic_cast<MovieClip*>(&o))
+            s = mc->drawnShape();
+        if (s) shape(*s, m, hidden);
+        Kind k = hidden ? Hidden : o.clipDepth ? Mask : dynamic_cast<ButtonObject*>(&o) ? Button
+               : dynamic_cast<MovieClip*>(&o) ? Clip : (dynamic_cast<TextField*>(&o) || dynamic_cast<StaticTextObject*>(&o)) ? Text
+               : KindCount;
+        if (k != KindCount && o.parent()) box(k, o.localBounds(), m);
+        o.forEachChild([&](DisplayObject& c) { visit(c, m, hidden); });
+    }
+};
+
+}  // namespace
+
+void drawDebugOverlay(DisplayObject& root, Surface& dst, const Matrix& rootMatrix) {
+    DebugOverlay overlay;
+    overlay.visit(root, rootMatrix, false);
+    const Color colors[DebugOverlay::KindCount] = {
+        {0, 220, 255, 170},  // shape edges
+        {60, 255, 60, 220},  // clips
+        {255, 230, 0, 230},  // text
+        {255, 60, 255, 230}, // buttons
+        {255, 150, 0, 230},  // masks
+        {255, 40, 40, 200},  // invisible objects and their contents
+    };
+    IntRect all{0, 0, dst.width, dst.height};
+    for (int k = 0; k < DebugOverlay::KindCount; k++) {
+        Paint p;
+        p.color = colors[k];
+        overlay.passes[k].fill(dst, all, p);
+    }
+}
+
 void snapshotTransforms(DisplayObject& o) {
     o.prevMatrix = o.matrix;
     o.hasPrevMatrix = true;

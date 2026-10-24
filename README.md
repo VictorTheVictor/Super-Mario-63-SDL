@@ -49,14 +49,18 @@ Requires a C++17 compiler, CMake and SDL2. `third_party/minimp3` (CC0) is vendor
 Symbol viewer keys: Space play/pause, Left/Right step a frame, Escape quit.
 Game mode: input goes to the game; Shift+Escape quits. F11 toggles fullscreen, F5 toggles
 letterboxing (off: the game fills the window and shows what lies beyond the stage edges),
-F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F3 toggles
-smooth motion.
+F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F6 toggles
+smooth motion. The game's fps counter shows the frames actually drawn per second.
+Links (the Runouw and Newgrounds banners) open in the default browser, and the cursor
+turns into a hand over anything clickable.
 
 Game controllers (SDL GameController, e.g. Xbox layout): D-pad or left stick moves, A jumps,
-B uses FLUDD, X spins, Y ground pounds (Down), the bumpers talk/confirm (Z). They press the
-same keys the game reads from the keyboard (S, C, X, Down, Z and the arrows).
-Debugging: F2 toggles noclip (arrow keys fly Mario through walls, Shift for speed), F9
-writes `sm63-dump-N.txt` (display tree) and `sm63-dump-N.bmp` (frame).
+B uses FLUDD, X spins, Y ground pounds and talks (Z), the bumpers also press Z. They press
+the same keys the game reads from the keyboard (S, C, X, Z and the arrows).
+Debugging: F2 toggles noclip (arrow keys fly Mario through walls, Shift for speed), F3
+shows every object's outline over the frame (shape edges in cyan; boxes for clips in
+green, text in yellow, buttons in magenta, masks in orange; invisible objects such as the
+collision clips in red), F9 writes `sm63-dump-N.txt` (display tree) and `sm63-dump-N.bmp`.
 The window title shows the rendered frames per second.
 
 ### Smooth motion
@@ -66,7 +70,7 @@ unchanged, but the window draws a frame every display refresh: moving objects ar
 between their positions at the last two ticks (one tick of display latency). Flips and
 jumps of more than 100 px snap instead of sliding. Scripts and hit tests always see the
 real positions. Frames render on the worker threads while the previous one waits for
-vsync. `--no-smooth-motion` (or F3) draws only at game ticks.
+vsync. `--no-smooth-motion` (or F6) draws only at game ticks.
 
 ### Resolution and rendering
 

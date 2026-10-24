@@ -3,6 +3,7 @@
 // dispatch, text field variable bindings and garbage collection.
 
 #include <deque>
+#include <functional>
 #include <list>
 #include <memory>
 #include <set>
@@ -25,6 +26,13 @@ public:
 
     // Advances one frame (enterFrame events, timelines, queued scripts, intervals).
     void tick();
+    // True while the mouse is over something clickable that shows Flash's hand cursor
+    // (buttons and clips with button handlers, unless useHandCursor is false).
+    bool wantsHandCursor();
+    // Draws every object's outline and bounds over the frame (see flash::drawDebugOverlay).
+    bool debugOverlay = false;
+    // Called each tick after scripts ran and before bound text fields update.
+    std::function<void()> beforeBindings;
     // Renders the stage scaled to fill `dst`'s width, split into bands across threads.
     // `interpolation` places moving objects between the previous tick (0) and the
     // current one (1), for drawing more frames than the game ticks. With `scale` > 0 the

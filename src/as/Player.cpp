@@ -228,6 +228,7 @@ void Player::tick() {
         mc->runFrameSelf();
     }
     runActions();
+    if (beforeBindings) beforeBindings();
     updateBindings();
     runIntervals(rt.timeMs());
     if (audio_) audio_->update(frames_);  // may call onSoundComplete
@@ -265,6 +266,7 @@ void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolat
         flash::Rasterizer& rast = worker == 0 ? r : rasterizers_[worker - 1];
         flash::renderDisplayObject(*root_, rast, dst, clip, m, flash::ColorTransform{}, movie_);
     });
+    if (debugOverlay) flash::drawDebugOverlay(*root_, dst, m);
     flash::renderSettings.layerCache = nullptr;
     flash::renderSettings.interpolation = 1;  // scripts see real positions
     layerCache_.endFrame();
@@ -333,6 +335,13 @@ void Player::keyUp(int code) {
     keyEvent(code, 0, false);
     broadcastEvent(clipevent::KeyUp);
     runActions();
+}
+
+bool Player::wantsHandCursor() {
+    auto hover = hover_.lock();
+    if (!hover || isRemoved(hover.get()) || !isInteractive(*hover)) return false;
+    Value v = getMember(valueOf(hover.get()), intern("useHandCursor"));
+    return v.isUndefined() || v.toBoolean();
 }
 
 bool Player::isInteractive(DisplayObject& d) {

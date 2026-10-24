@@ -3,9 +3,9 @@
 // Display-list classes (MovieClip, TextField, Color, Sound) live in Stage.cpp.
 
 #include "as/Builtins.h"
-#include "as/Deterministic.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -14,6 +14,9 @@
 #include <map>
 #include <random>
 #include <sstream>
+
+#include "as/Deterministic.h"
+#include "as/Host.h"
 
 namespace as {
 namespace {
@@ -31,6 +34,18 @@ bool g_deterministic = false;
 double g_clockMs = 0;
 
 }  // namespace
+
+Host& host() {
+    static Host h;
+    return h;
+}
+
+void openUrl(const std::string& url) {
+    std::string lower;
+    for (char c : url.substr(0, 8)) lower += (char)std::tolower((unsigned char)c);
+    bool link = lower.rfind("http://", 0) == 0 || lower.rfind("https://", 0) == 0 || lower.rfind("mailto:", 0) == 0;
+    if (link && host().openUrl) host().openUrl(url);
+}
 
 void setDeterministic(uint32_t seed) {
     g_deterministic = true;
@@ -175,6 +190,18 @@ Value g_ord(const Value&, Args a) {
 }
 Value g_getVersion(const Value&, Args) { return Value("WIN 8,0,0,0"); }
 Value g_noop(const Value&, Args) { return undefined; }
+
+Value g_getURL(const Value&, Args a) {
+    if (a.size() > 0) openUrl(a[0].toString());
+    return undefined;
+}
+
+// The Newgrounds API (NewgroundsAPI.loadNewgrounds() behind the Newgrounds banners)
+// is an AS2 class library the port does not run; its banner link opens the site.
+Value ng_loadNewgrounds(const Value&, Args) {
+    openUrl("https://www.newgrounds.com");
+    return undefined;
+}
 
 // ---------------------------------------------------------------- Object / Function
 
@@ -986,7 +1013,10 @@ void installBuiltins(Runtime& rt) {
     Object* cmProto = getMember(Value(G), internLiteral("ContextMenu"))["prototype"].get().object();
     rt.method(cmProto, "hideBuiltInItems", g_noop);
     rt.defineClass(G, "ContextMenuItem", nullptr, menuItem_ctor, rt.newObject());
-    fn("getURL", g_noop);
+    fn("getURL", g_getURL);
+    Object* ng = rt.newObject();
+    rt.method(ng, "loadNewgrounds", ng_loadNewgrounds);
+    G->defineSlot(intern("NewgroundsAPI"), Value(ng), DontEnum);
 
     rt.rootProviders.push_back(traceBuiltins);
 }

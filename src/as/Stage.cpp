@@ -4,6 +4,7 @@
 #include <map>
 #include <unordered_map>
 
+#include "as/Host.h"
 #include "flash/Text.h"
 
 namespace as {
@@ -611,6 +612,11 @@ Value mc_curveTo(const Value& self, Args a) {
 Value mc_clear(const Value& self, Args) { if (auto* mc = thisClip(self)) mc->drawing().clear(); return undefined; }
 Value mc_getBytes(const Value&, Args) { return 1024; }
 Value mc_noop(const Value&, Args) { return undefined; }
+
+Value mc_getURL(const Value&, Args a) {
+    if (a.size() > 0) openUrl(a[0].toString());
+    return undefined;
+}
 Value mc_toString(const Value& self, Args) {
     DisplayObject* d = displayOf(self);
     return Value(d ? targetPath(d) : std::string());
@@ -786,7 +792,7 @@ void installStageBuiltins(Runtime& rt) {
         {"lineStyle", mc_lineStyle}, {"beginFill", mc_beginFill}, {"endFill", mc_endFill},
         {"moveTo", mc_moveTo}, {"lineTo", mc_lineTo}, {"curveTo", mc_curveTo}, {"clear", mc_clear},
         {"getBytesLoaded", mc_getBytes}, {"getBytesTotal", mc_getBytes}, {"loadMovie", mc_noop},
-        {"unloadMovie", mc_noop}, {"getURL", mc_noop}, {"startDrag", mc_noop}, {"stopDrag", mc_noop},
+        {"unloadMovie", mc_noop}, {"getURL", mc_getURL}, {"startDrag", mc_noop}, {"stopDrag", mc_noop},
         {"setMask", mc_noop}, {"toString", mc_toString}});
     rt.defineClass(G, "MovieClip", nullptr, nullptr, g_movieClipProto);
     g_textFieldProto = makeProto(rt, {{"toString", mc_toString}, {"removeTextField", mc_removeMovieClip},

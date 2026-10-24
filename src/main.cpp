@@ -31,6 +31,7 @@
 #include "as/Builtins.h"
 #include "as/Deterministic.h"
 #include "as/Diagnostics.h"
+#include "as/Host.h"
 #include "as/Player.h"
 #include "flash/DisplayObject.h"
 #include "game/Scripts.h"
@@ -477,6 +478,7 @@ int main(int argc, char** argv) {
     int renderThreads = 0;   // 0: one per hardware thread
     bool noLayerCache = false;
     bool noInterpolation = false;  // --no-smooth-motion: draw only at game ticks
+    bool debugOverlay = false;     // --debug-overlay: start with the F3 view on
     double headlessInterpolation = 1;  // --interpolate T: screenshot between the last two ticks
     std::string profilePath;  // --profile: sample stacks from --bench-from on
     bool stats = false, checkExports = false, mute = false, dump = false, traces = false,
@@ -490,6 +492,7 @@ int main(int argc, char** argv) {
         else if (a == "--deterministic") as::setDeterministic(63);
         else if (a == "--no-layer-cache") noLayerCache = true;
         else if (a == "--no-smooth-motion") noInterpolation = true;
+        else if (a == "--debug-overlay") debugOverlay = true;
         else if (a == "--interpolate" && i + 1 < argc) headlessInterpolation = std::atof(argv[++i]);
         else if (a == "--profile" && i + 1 < argc) profilePath = argv[++i], bench = true;
         else if (a == "--threads" && i + 1 < argc) renderThreads = std::max(1, std::atoi(argv[++i]));
@@ -610,6 +613,7 @@ int main(int argc, char** argv) {
         player = std::make_unique<as::Player>(movie);
         if (renderThreads) player->setRenderThreads(renderThreads);
         if (noLayerCache) player->setLayerCaching(false);
+        player->debugOverlay = debugOverlay;
         player->setAudio(audioBridge.get());
         viewed = &player->root();
     }
@@ -931,9 +935,25 @@ int main(int argc, char** argv) {
     bool smooth = !noInterpolation;
 
     // Game controllers press the game's own keys: D-pad / left stick = arrows, A = S
-    // (jump), B = C (FLUDD), X = X (spin), Y = Down (ground pound), bumpers = Z (talk).
+    // (jump), B = C (FLUDD), X = X (spin), Y = Z (ground pound, also talk), bumpers = Z.
     // Each frame the held keys are compared with the last frame and only changes are sent.
     std::set<int> padKeys;
+
+    // Links open with the OS's default handler; the cursor turns into a hand over
+    // clickable things, as in Flash.
+    as::host().openUrl = [](const std::string& url) {
+        std::printf("opening %s\n", url.c_str());
+        if (SDL_OpenURL(url.c_str()) != 0) std::fprintf(stderr, "could not open %s: %s\n", url.c_str(), SDL_GetError());
+    };
+    SDL_Cursor* arrowCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_ARROW);
+    SDL_Cursor* handCursor = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_HAND);
+    bool showingHand = false;
+    auto updateCursor = [&]() {
+        bool hand = player && player->wantsHandCursor();
+        if (hand == showingHand) return;
+        showingHand = hand;
+        SDL_SetCursor(hand ? handCursor : arrowCursor);
+    };
     auto updatePad = [&]() {
         std::set<int> held;
         padLeft = padRight = padUp = padDown = false;
@@ -952,7 +972,7 @@ int main(int argc, char** argv) {
             if (button(SDL_CONTROLLER_BUTTON_A)) held.insert('S');
             if (button(SDL_CONTROLLER_BUTTON_B)) held.insert('C');
             if (button(SDL_CONTROLLER_BUTTON_X)) held.insert('X');
-            if (button(SDL_CONTROLLER_BUTTON_Y)) held.insert(as::keycode::Down);
+            if (button(SDL_CONTROLLER_BUTTON_Y)) held.insert('Z');
             if (button(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) || button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))
                 held.insert('Z');
         }
@@ -996,6 +1016,39 @@ int main(int argc, char** argv) {
     std::future<void> rendering;
     int framesShown = 0;
     Uint64 fpsSince = SDL_GetPerformanceCounter();
+    double renderFps = 0;  // frames actually drawn per second, measured over ~1 s
+    // The game's own fps counter (Menu/Framerate Counter) measures game ticks, which stay
+    // at 32 now that frames are drawn between them; show the frames drawn instead. The
+    // game's calculation still runs (its auto-quality uses it), only the text changes.
+    std::weak_ptr<flash::DisplayObject> fpsCounter;
+    int fpsCounterSearchIn = 0;  // ticks until the next search when there is no counter
+    if (player)
+        player->beforeBindings = [&]() {
+            if (renderFps <= 0) return;
+            auto counter = fpsCounter.lock();
+            if (!counter || as::isRemoved(counter.get())) {
+                counter.reset();
+                if (fpsCounterSearchIn-- > 0) return;
+                fpsCounterSearchIn = 32;
+                std::function<void(flash::DisplayObject&)> find = [&](flash::DisplayObject& d) {
+                    if (counter) return;
+                    if (dynamic_cast<MovieClip*>(&d) &&
+                        !as::getMember(as::valueOf(&d), as::intern("frtxt")).isUndefined()) {
+                        counter = d.shared_from_this();
+                        return;
+                    }
+                    d.forEachChild(find);
+                };
+                find(player->root());
+                fpsCounter = counter;
+                if (!counter) return;
+            }
+            // Same format as the game: one decimal, "fps: 07.5" below 10.
+            double fps = std::round(renderFps * 10) / 10;
+            char text[32];
+            std::snprintf(text, sizeof text, "fps: %s%.1f", fps < 10 ? "0" : "", fps);
+            as::setMember(as::valueOf(counter.get()), as::intern("frtxt"), as::Value(std::string(text)));
+        };
     auto finishRendering = [&]() {
         if (!rendering.valid()) return;
         rendering.get();
@@ -1003,6 +1056,7 @@ int main(int argc, char** argv) {
         framesShown++;
         // Rendered frames per second in the title (the game's own counter shows its ticks).
         double secs = (SDL_GetPerformanceCounter() - fpsSince) / (double)SDL_GetPerformanceFrequency();
+        if (player && secs >= 0.5) renderFps = framesShown / secs;
         if (player && secs >= 1) {
             char title[96];
             std::snprintf(title, sizeof title, "Super Mario 63 — %.0f fps, %dx%d%s%s", framesShown / secs, surf.width,
@@ -1066,6 +1120,11 @@ int main(int argc, char** argv) {
                             break;
                         }
                         if (e.key.keysym.sym == SDLK_F3 && !e.key.repeat) {
+                            player->debugOverlay = !player->debugOverlay;
+                            redraw = true;
+                            break;
+                        }
+                        if (e.key.keysym.sym == SDLK_F6 && !e.key.repeat) {
                             smooth = !smooth;
                             redraw = true;
                             break;
@@ -1137,6 +1196,7 @@ int main(int argc, char** argv) {
             }
         }
         if (player) updatePad();
+        updateCursor();
         Uint64 now = SDL_GetPerformanceCounter();
         acc += (now - last) * 1000.0 / SDL_GetPerformanceFrequency();
         last = now;

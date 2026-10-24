@@ -216,6 +216,8 @@ public:
 
     Drawing& drawing();
     bool hasDrawing() const { return drawing_ && !drawing_->empty(); }
+    // The drawing API shape as last prepared for rendering (see prepareForRender()).
+    const ShapeDef* drawnShape() const { return hasDrawing() ? &drawing_->preparedShape() : nullptr; }
     // True if a mask layer (clipDepth) covers `depth` but not point `p` (m: this clip's
     // space -> p's space). Masked content only counts where its mask does.
     bool maskBlocks(int depth, const Matrix& m, Point p) const;
@@ -331,6 +333,11 @@ using ParallelRender = std::function<void(int n, const std::function<void(int i,
 // alone while the others wait). `rootMatrix` must be the matrix the bands render with.
 void prerenderLayers(DisplayObject& root, const Matrix& rootMatrix, const Surface& target, const Movie& movie,
                      LayerCache& cache, Rasterizer& r, const ParallelRender& parallel);
+
+// Debug view: outlines every object over the frame: shape edges (the "mesh") and each
+// object's transformed bounds, with invisible objects (such as the game's collision
+// clips) in red. `rootMatrix` is the matrix the frame was rendered with.
+void drawDebugOverlay(DisplayObject& root, Surface& dst, const Matrix& rootMatrix);
 
 // Records every object's current matrix as its previous-tick matrix (call before a tick).
 void snapshotTransforms(DisplayObject& root);

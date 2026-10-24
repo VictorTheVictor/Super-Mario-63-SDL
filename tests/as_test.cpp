@@ -4,8 +4,10 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 #include "as/Builtins.h"
+#include "as/Host.h"
 #include "as/Runtime.h"
 
 using namespace as;
@@ -270,6 +272,24 @@ static void testSharedObject() {
     if (f) std::fclose(f);
 }
 
+// getURL hands web and mail links to the host (which opens them with the OS); other
+// schemes are ignored. The Newgrounds banners' NewgroundsAPI.loadNewgrounds() opens
+// the site.
+static void testLinks() {
+    std::vector<std::string> opened;
+    host().openUrl = [&](const std::string& url) { opened.push_back(url); };
+    Value G(Runtime::get().global);
+    G["getURL"]("http://runouw.com", "_blank");
+    G["getURL"]("javascript:alert(1)");
+    G["getURL"]("mailto:someone@example.com");
+    G["NewgroundsAPI"]["loadNewgrounds"]();
+    CHECK(opened.size() == 3);
+    CHECK(opened.size() == 3 && opened[0] == "http://runouw.com");
+    CHECK(opened.size() == 3 && opened[1] == "mailto:someone@example.com");
+    CHECK(opened.size() == 3 && opened[2] == "https://www.newgrounds.com");
+    host().openUrl = nullptr;
+}
+
 int main() {
     testConversions();
     testOperators();
@@ -277,6 +297,7 @@ int main() {
     testFunctionsAndScope();
     testGc();
     testSharedObject();
+    testLinks();
     std::remove("./as_test_save.sol.txt");
     std::printf("%d/%d checks passed\n", checks - failures, checks);
     return failures ? 1 : 0;
