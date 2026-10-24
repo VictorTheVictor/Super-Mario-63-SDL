@@ -1,5 +1,6 @@
 #include "as/Player.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <functional>
 
@@ -220,6 +221,7 @@ void Player::broadcastEvent(uint32_t event) {
 void Player::tick() {
     Runtime& rt = Runtime::get();
     advanceClock(1000.0 / movie_.frameRate);
+    flash::snapshotTransforms(*root_);  // where things were, for in-between frames
     for (auto& mc : liveClips()) {
         if (isRemoved(mc.get())) continue;  // removed earlier in this pass
         queue(*mc, Kind::Event, clipevent::EnterFrame);
@@ -234,13 +236,14 @@ void Player::tick() {
     rt.maybeCollect();
 }
 
-void Player::render(flash::Rasterizer& r, flash::Surface& dst) {
+void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolation) {
     flash::Color bg = movie_.background;
     dst.clear(0xFF000000u | bg.r << 16 | bg.g << 8 | bg.b);
     // The surface may be larger than the stage: scale everything to fill its width.
     double stageWidth = (movie_.stageRect.xMax - movie_.stageRect.xMin) / 20;
     double scale = stageWidth > 0 ? dst.width / stageWidth : 1;
     flash::renderSettings.scale = scale;
+    flash::renderSettings.interpolation = std::clamp(interpolation, 0.0, 1.0);
     flash::prepareForRender(*root_);
     if (!renderPool_) setRenderThreads(flash::WorkerPool::defaultThreads());
     // More bands than threads, so a thread finishing a cheap band takes another.
@@ -259,6 +262,7 @@ void Player::render(flash::Rasterizer& r, flash::Surface& dst) {
         flash::renderDisplayObject(*root_, rast, dst, clip, m, flash::ColorTransform{}, movie_);
     });
     flash::renderSettings.layerCache = nullptr;
+    flash::renderSettings.interpolation = 1;  // scripts see real positions
     layerCache_.endFrame();
 }
 

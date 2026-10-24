@@ -72,6 +72,12 @@ public:
     int depth = 0;
     std::string name;
     Matrix matrix;  // twips, relative to parent
+    // `matrix` as of the previous game tick (see renderSettings.interpolation).
+    Matrix prevMatrix;
+    bool hasPrevMatrix = false;
+    // The matrix to draw with: `matrix`, or between the previous tick's and the current
+    // one while rendering an in-between frame.
+    Matrix drawMatrix() const;
     ColorTransform cxform;
     uint16_t ratio = 0;
     uint16_t clipDepth = 0;
@@ -322,6 +328,9 @@ using ParallelRender = std::function<void(int n, const std::function<void(int i,
 // alone while the others wait). `rootMatrix` must be the matrix the bands render with.
 void prerenderLayers(DisplayObject& root, const Matrix& rootMatrix, const Surface& target, const Movie& movie,
                      LayerCache& cache, Rasterizer& r, const ParallelRender& parallel);
+
+// Records every object's current matrix as its previous-tick matrix (call before a tick).
+void snapshotTransforms(DisplayObject& root);
 
 // Computes everything rendering would otherwise compute lazily (text layout, morph
 // shapes), so rendering itself only reads the display list.

@@ -44,6 +44,10 @@ struct RenderSettings {
     // When set, filtered layers are rendered once per frame and shared between the
     // threads rendering bands of it (instead of each band redoing its padded strip).
     LayerCache* layerCache = nullptr;
+    // Position between the previous game tick (0) and the current one (1) to draw
+    // objects at, for rendering more often than the game ticks. 1 outside rendering, so
+    // scripts and hit tests always see the real state.
+    double interpolation = 1;
 };
 extern RenderSettings renderSettings;
 

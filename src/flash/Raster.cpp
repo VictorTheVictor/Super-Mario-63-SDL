@@ -429,39 +429,68 @@ void Rasterizer::fill(Surface& dst, const IntRect& clip, const Paint& paint) {
     bool smooth = fs->type == FillStyle::RepeatingBitmap || fs->type == FillStyle::ClippedBitmap;
     // Magnified: one device pixel spans less than one texel.
     if (renderSettings.crispBitmaps && std::fabs(inv.a * inv.d - inv.b * inv.c) < 1) smooth = false;
+    if (smooth) {
+        struct {
+            const Matrix& inv;
+            const Bitmap& bmp;
+            bool repeat, identityCx;
+            const ColorTransform& cx;
+            double px = 0, py = 0;
+            void row(int x, double y) {
+                px = x + 0.5;
+                py = y;
+            }
+            void step() { px += 1; }
+            uint32_t color() const {
+                double u = inv.a * px + inv.c * py + inv.tx;
+                double v = inv.b * px + inv.d * py + inv.ty;
+                uint32_t c = sampleBilinear(bmp, u, v, repeat);
+                return identityCx ? c : applyCxPremul(cx, c);
+            }
+        } bilinear{inv, *bmp, repeat, identityCx, paint.cxform};
+        paintRows(bilinear);
+        return;
+    }
+    // Nearest texel. For repeating fills, `baseX`/`baseY` track which repeat of the
+    // bitmap the row is in, so wrapping is usually a compare instead of a division.
     struct {
         const Matrix& inv;
         const Bitmap& bmp;
-        bool repeat, smooth, identityCx;
+        bool repeat, identityCx;
         const ColorTransform& cx;
         double invW, invH;
         double px = 0, py = 0;
+        int baseX = 0, baseY = 0;
         void row(int x, double y) {
             px = x + 0.5;
             py = y;
         }
         void step() { px += 1; }
-        uint32_t color() const {
-            double u = inv.a * px + inv.c * py + inv.tx;
-            double v = inv.b * px + inv.d * py + inv.ty;
-            uint32_t c;
-            if (smooth) {
-                c = sampleBilinear(bmp, u, v, repeat);
-            } else {
-                int tx = floorInt(u), ty = floorInt(v);
-                if (repeat) {
-                    tx = wrapIndex(tx, bmp.width, invW);
-                    ty = wrapIndex(ty, bmp.height, invH);
-                } else {
-                    tx = std::clamp(tx, 0, bmp.width - 1);
-                    ty = std::clamp(ty, 0, bmp.height - 1);
-                }
-                c = bmp.pixels[(size_t)ty * bmp.width + tx];
+        static int wrap(int t, int n, double invN, int& base) {
+            int r = t - base;
+            if ((unsigned)r >= (unsigned)n) {
+                base = floorInt(t * invN) * n;
+                r = t - base;
+                if (r < 0) r += n, base -= n;
+                else if (r >= n) r -= n, base += n;
             }
+            return r;
+        }
+        uint32_t color() {
+            int tx = floorInt(inv.a * px + inv.c * py + inv.tx);
+            int ty = floorInt(inv.b * px + inv.d * py + inv.ty);
+            if (repeat) {
+                tx = wrap(tx, bmp.width, invW, baseX);
+                ty = wrap(ty, bmp.height, invH, baseY);
+            } else {
+                tx = std::clamp(tx, 0, bmp.width - 1);
+                ty = std::clamp(ty, 0, bmp.height - 1);
+            }
+            uint32_t c = bmp.pixels[(size_t)ty * bmp.width + tx];
             return identityCx ? c : applyCxPremul(cx, c);
         }
-    } bitmap{inv, *bmp, repeat, smooth, identityCx, paint.cxform, 1.0 / bmp->width, 1.0 / bmp->height};
-    paintRows(bitmap);
+    } nearest{inv, *bmp, repeat, identityCx, paint.cxform, 1.0 / bmp->width, 1.0 / bmp->height};
+    paintRows(nearest);
 }
 
 void drawShape(Rasterizer& r, Surface& dst, const IntRect& clip, const ShapeDef& shape,

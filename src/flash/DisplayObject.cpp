@@ -194,7 +194,7 @@ void renderDisplayObject(DisplayObject& o, Rasterizer& r, Surface& dst, const In
                          const Matrix& parentMatrix, const ColorTransform& parentCx,
                          const Movie& movie, bool ignoreVisible) {
     if (!o.visible && !ignoreVisible) return;
-    Matrix m = parentMatrix * o.matrix;
+    Matrix m = parentMatrix * o.drawMatrix();
     ColorTransform cx = parentCx * o.cxform;
     bool needsLayer = !o.filters.empty() || o.blendMode >= BlendLayer;
     if (!needsLayer) {
@@ -228,7 +228,7 @@ namespace {
 void collectCachedLayers(DisplayObject& o, const Matrix& parentMatrix,
                          std::vector<std::pair<DisplayObject*, Matrix>>& out) {
     if (!o.visible) return;
-    Matrix m = parentMatrix * o.matrix;
+    Matrix m = parentMatrix * o.drawMatrix();
     if (!o.filters.empty() || o.blendMode >= BlendLayer) {
         if (usesCachedLayer(o)) out.push_back({&o, m});
         return;  // its children draw into its layer
@@ -273,6 +273,28 @@ void LayerCache::endFrame() {
         it = it->second->usedFrame == frame ? std::next(it) : layers_.erase(it);
 }
 
+Matrix DisplayObject::drawMatrix() const {
+    double t = renderSettings.interpolation;
+    if (t >= 1 || !hasPrevMatrix) return matrix;
+    const Matrix& a = prevMatrix;
+    const Matrix& b = matrix;
+    if (a.a == b.a && a.b == b.b && a.c == b.c && a.d == b.d && a.tx == b.tx && a.ty == b.ty) return b;
+    // Jump instead of sweeping through flips (turning around) or across large moves
+    // (teleports, camera cuts), which the game shows as instant.
+    const double kJump = 100 * 20;  // twips
+    if ((a.a * a.d - a.b * a.c) * (b.a * b.d - b.b * b.c) <= 0 || std::fabs(b.tx - a.tx) > kJump ||
+        std::fabs(b.ty - a.ty) > kJump)
+        return b;
+    auto l = [t](double x, double y) { return x + (y - x) * t; };
+    return {l(a.a, b.a), l(a.b, b.b), l(a.c, b.c), l(a.d, b.d), l(a.tx, b.tx), l(a.ty, b.ty)};
+}
+
+void snapshotTransforms(DisplayObject& o) {
+    o.prevMatrix = o.matrix;
+    o.hasPrevMatrix = true;
+    o.forEachChild([](DisplayObject& c) { snapshotTransforms(c); });
+}
+
 uint64_t nextContentVersion() {
     static std::atomic<uint64_t> counter{0};
     return ++counter;
@@ -281,7 +303,7 @@ uint64_t nextContentVersion() {
 void DisplayObject::hashForRender(RenderHash& h, bool self) {
     h.add((uint64_t)(def_ ? def_->id : 0xFFFFFFu));
     if (self) {
-        h.add(matrix);
+        h.add(drawMatrix());
         h.add(cxform);
     }
     h.add((uint64_t)ratio << 32 | (uint64_t)clipDepth << 16 | (uint64_t)blendMode << 1 | visible);
@@ -353,7 +375,7 @@ void ButtonObject::render(Rasterizer& r, Surface& dst, const IntRect& clip, cons
 
 Rect ButtonObject::localBounds() const {
     Rect out;
-    for (auto& [d, c] : children_) out = unionRect(out, c->matrix.apply(c->localBounds()));
+    for (auto& [d, c] : children_) out = unionRect(out, c->drawMatrix().apply(c->localBounds()));
     return out;
 }
 
@@ -757,7 +779,7 @@ void MovieClip::advance() {
 Rect MovieClip::localBounds() const {
     Rect out;
     if (hasDrawing()) out = drawing_->cachedShape().bounds;
-    for (auto& [d, c] : children_) out = unionRect(out, c->matrix.apply(c->localBounds()));
+    for (auto& [d, c] : children_) out = unionRect(out, c->drawMatrix().apply(c->localBounds()));
     return out;
 }
 
@@ -809,7 +831,7 @@ void MovieClip::render(Rasterizer& r, Surface& dst, const IntRect& clip, const M
         while (last != children_.end() && last->first <= c.clipDepth) ++last;
         auto first = std::next(it);
         it = std::prev(last);
-        Rect b = (m * c.matrix).apply(c.localBounds());
+        Rect b = (m * c.drawMatrix()).apply(c.localBounds());
         if (b.empty() || !std::isfinite(b.xMin) || !std::isfinite(b.yMin) || !std::isfinite(b.xMax) ||
             !std::isfinite(b.yMax))
             continue;

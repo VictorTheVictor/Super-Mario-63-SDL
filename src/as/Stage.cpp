@@ -73,7 +73,15 @@ StageContext& stage() {
 // ---------------------------------------------------------------- paths
 
 bool isRemoved(const DisplayObject* d) {
-    return d && d != stage().root.get() && d->parent() == nullptr;
+    // Off the display list if any ancestor was removed: removing a clip takes its whole
+    // subtree with it (its children keep their parent pointers).
+    if (!d) return false;
+    const DisplayObject* root = stage().root.get();
+    while (d != root) {
+        if (!d->parent()) return true;
+        d = d->parent();
+    }
+    return false;
 }
 
 std::string targetPath(const DisplayObject* d) {

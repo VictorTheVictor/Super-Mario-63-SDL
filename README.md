@@ -48,7 +48,17 @@ Requires a C++17 compiler, CMake and SDL2. `third_party/minimp3` (CC0) is vendor
 
 Symbol viewer keys: Space play/pause, Left/Right step a frame, Escape quit.
 Game mode: input goes to the game; Shift+Escape quits. F11 toggles fullscreen, F2 toggles
-crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps.
+crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F3 toggles smooth motion.
+The window title shows the rendered frames per second.
+
+### Smooth motion
+
+The game logic still runs at the SWF's 32 ticks per second, so physics and timing are
+unchanged, but the window draws a frame every display refresh: moving objects are drawn
+between their positions at the last two ticks (one tick of display latency). Flips and
+jumps of more than 100 px snap instead of sliding. Scripts and hit tests always see the
+real positions. Frames render on the worker threads while the previous one waits for
+vsync. `--no-smooth-motion` (or F3) draws only at game ticks.
 
 ### Resolution and rendering
 
@@ -69,3 +79,7 @@ Headless options for testing and profiling (with `--frames N`):
     --profile out.prof                      # sampling profiler (Linux); report with tools/profile.py
     --deterministic                         # fixed random seed and frame-driven clock
     --threads 1 --no-layer-cache            # reference renderer for comparisons
+    --interpolate 0.5                       # screenshot halfway between the last two ticks
+    --course C-1@F | --course C-1,lefttransition2,700,-250@F | --course StartInsideofCastle()@F
+                                            # switch course at frame F (as the game does)
+    --symbol '#2539'                        # view any character by id, scaled to fit

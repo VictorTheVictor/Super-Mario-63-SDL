@@ -26,7 +26,9 @@ public:
     // Advances one frame (enterFrame events, timelines, queued scripts, intervals).
     void tick();
     // Renders the stage scaled to fill `dst`'s width, split into bands across threads.
-    void render(flash::Rasterizer& r, flash::Surface& dst);
+    // `interpolation` places moving objects between the previous tick (0) and the
+    // current one (1), for drawing more frames than the game ticks.
+    void render(flash::Rasterizer& r, flash::Surface& dst, double interpolation = 1);
     // Render threads, including the caller (default: the machine's hardware threads).
     void setRenderThreads(int n);
     // Keeping filtered layers between frames (on by default; off for comparisons).

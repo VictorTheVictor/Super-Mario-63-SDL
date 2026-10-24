@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <functional>
+#include <future>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -57,7 +58,16 @@ void onSignal(int) {
     if (i < kMax) g_depths[i] = backtrace(g_stacks[i], kDepth);
 }
 
-void start() {
+const char* g_path = nullptr;
+void stop(const char* path);
+
+void start(const char* path) {
+    g_path = path;
+    // A run killed by a timeout (e.g. a script stuck in a loop) still writes its samples.
+    signal(SIGTERM, [](int) {
+        stop(g_path);
+        std::_Exit(143);
+    });
     void* warm[4];
     backtrace(warm, 4);  // loads libgcc's unwinder outside the signal handler
     signal(SIGPROF, onSignal);
@@ -447,6 +457,8 @@ int main(int argc, char** argv) {
     double renderScale = 1;  // headless output size, in multiples of the stage size
     int renderThreads = 0;   // 0: one per hardware thread
     bool noLayerCache = false;
+    bool noInterpolation = false;  // --no-smooth-motion: draw only at game ticks
+    double headlessInterpolation = 1;  // --interpolate T: screenshot between the last two ticks
     std::string profilePath;  // --profile: sample stacks from --bench-from on
     bool stats = false, checkExports = false, mute = false, dump = false, traces = false,
          diagnose = false, bench = false;
@@ -458,6 +470,8 @@ int main(int argc, char** argv) {
         else if (a == "--smooth") flash::renderSettings.crispBitmaps = false;
         else if (a == "--deterministic") as::setDeterministic(63);
         else if (a == "--no-layer-cache") noLayerCache = true;
+        else if (a == "--no-smooth-motion") noInterpolation = true;
+        else if (a == "--interpolate" && i + 1 < argc) headlessInterpolation = std::atof(argv[++i]);
         else if (a == "--profile" && i + 1 < argc) profilePath = argv[++i], bench = true;
         else if (a == "--threads" && i + 1 < argc) renderThreads = std::max(1, std::atoi(argv[++i]));
         else if (a == "--frames" && i + 1 < argc) frames = std::atoi(argv[++i]);
@@ -546,7 +560,9 @@ int main(int argc, char** argv) {
     std::unique_ptr<as::AudioBridge> audioBridge;
     std::unique_ptr<as::Player> player;
     if (!symbol.empty()) {
-        Character* def = movie.exported(symbol);
+        // NAME is an export name, or #ID for any character (scaled to fit the stage).
+        bool byId = symbol[0] == '#';
+        Character* def = byId ? movie.character((uint16_t)std::atoi(symbol.c_str() + 1)) : movie.exported(symbol);
         if (!def) {
             std::fprintf(stderr, "no exported symbol '%s'\n", symbol.c_str());
             return 1;
@@ -555,6 +571,11 @@ int main(int argc, char** argv) {
         symbolStage->stop();
         auto obj = symbolStage->attach(def, 1, "viewed");
         obj->matrix = Matrix::translate(W * 10, H * 10);
+        if (byId) {
+            Rect b = obj->localBounds();
+            double k = std::min(W * 20 / std::max(1.0, b.xMax - b.xMin), H * 20 / std::max(1.0, b.yMax - b.yMin));
+            obj->matrix = Matrix::translate(-b.xMin * k, -b.yMin * k) * Matrix::scale(k, k);
+        }
         viewed = dynamic_cast<MovieClip*>(obj.get());
     } else {
         // _url as Flash Player reports it: the SWF's own file URL.
@@ -578,9 +599,10 @@ int main(int argc, char** argv) {
     surf.resize((int)std::lround(W * renderScale), (int)std::lround(H * renderScale));
     Rasterizer rast;
     const Color bg = movie.background;
+    double interpolation = 1;  // window mode: how far between the last two ticks to draw
     auto renderFrame = [&]() {
         if (player) {
-            player->render(rast, surf);
+            player->render(rast, surf, interpolation);
             return;
         }
         surf.clear(0xFF000000u | bg.r << 16 | bg.g << 8 | bg.b);
@@ -604,7 +626,7 @@ int main(int argc, char** argv) {
         std::vector<double> tickMs, renderMs;
         for (int i = 0; i < frames; i++) {
 #ifdef __linux__
-            if (!profilePath.empty() && i == benchFrom) prof::start();
+            if (!profilePath.empty() && i == benchFrom) prof::start(profilePath.c_str());
 #endif
             if (player)
                 for (const InputEvent& e : events) {
@@ -626,12 +648,37 @@ int main(int argc, char** argv) {
                         std::printf("  %s@%d:%d", c->name.c_str(), d - 16384, mc->currentFrame());
                 std::printf("\n");
             }
-            // --course NAME@FRAME: switch course part through the game's own path:
-            // _root.changecourse("StarIn", NAME, 0, 0, 0, 0, true)  (RemoveCourse + StartChar)
+            // --course NAME[,TRANSITION,X,Y]@FRAME: switch course part through the game's own path:
+            // _root.changecourse("StarIn", NAME, 0, 0, 0, 0)  (RemoveCourse + StartChar), called
+            // like the game's own scripts do. (A 7th argument `true` leaves coursescale at 0,
+            // which makes scripts that probe the level with it loop forever.)
             if (player && !courseSpec.empty() && i == std::atoi(courseSpec.c_str() + courseSpec.rfind('@') + 1)) {
                 as::Value root = as::valueOf(&player->root());
-                as::Value argv2[7] = {"StarIn", as::Value(courseSpec.substr(0, courseSpec.rfind('@'))), 0, 0, 0, 0, true};
-                as::callFunction(root["changecourse"].get(), root, as::Args{argv2, 7});
+                // NAME or NAME,TRANSITION,X,Y (e.g. C-1,lefttransition2,700,-250, as a door does),
+                // or FUNCTION() to call one of the game's own starters (StartInsideofCastle()).
+                std::string spec = courseSpec.substr(0, courseSpec.rfind('@'));
+                if (spec.size() > 2 && spec.compare(spec.size() - 2, 2, "()") == 0) {
+                    as::callFunction(root[spec.substr(0, spec.size() - 2).c_str()].get(), root, {});
+                } else {
+                    std::vector<std::string> parts;
+                    for (size_t a = 0, b; a <= spec.size(); a = b + 1) {
+                        b = spec.find(',', a);
+                        if (b == std::string::npos) b = spec.size();
+                        parts.push_back(spec.substr(a, b - a));
+                    }
+                    double cx = parts.size() > 2 ? std::atof(parts[2].c_str()) : 0;
+                    double cy = parts.size() > 3 ? std::atof(parts[3].c_str()) : 0;
+                    as::Value argv2[6] = {as::Value(parts.size() > 1 ? parts[1] : std::string("StarIn")),
+                                          as::Value(parts[0]), cx, cy, cx, cy};
+                    as::callFunction(root["changecourse"].get(), root, as::Args{argv2, 6});
+                    // The game runs Mario and the camera from _root.onEnterFrame = function() {
+                    // CharCode(); } once a course has started (see <main> frame 10).
+                    root["onEnterFrame"] = as::Value(as::Runtime::get().newNative(
+                        [](const as::Value& self, as::Args) {
+                            return as::callFunction(as::getMember(self, as::intern("CharCode")), self, {});
+                        },
+                        "onEnterFrame"));
+                }
             }
             // --set "_root.Course.Char._x=600@2000;...": assign numbers at given frames
             for (size_t ss = 0; player && ss < setSpec.size();) {
@@ -744,12 +791,19 @@ int main(int argc, char** argv) {
             if (!treePath.empty()) {
                 std::function<void(flash::DisplayObject&, int)> tree = [&](flash::DisplayObject& d, int depth) {
                     flash::Rect b = d.worldMatrix().apply(d.localBounds());
-                    const char* kind = dynamic_cast<MovieClip*>(&d) ? "clip" : d.definition() ? "shape/text" : "?";
-                    std::printf("  %*s%s [%s %d] depth %d clipDepth %d bounds (%.0f,%.0f)-(%.0f,%.0f) %s alpha %.2f xs %.2f ys %.2f\n",
+                    auto* dmc = dynamic_cast<MovieClip*>(&d);
+                    char kindBuf[32];
+                    std::snprintf(kindBuf, sizeof kindBuf, "clip f%d/%d", dmc ? dmc->currentFrame() : 0,
+                                  dmc ? dmc->totalFrames() : 0);
+                    const char* kind = dmc ? kindBuf : d.definition() ? "shape/text" : "?";
+                    std::printf("  %*s%s [%s %d] depth %d clipDepth %d bounds (%.0f,%.0f)-(%.0f,%.0f) %s alpha %.2f xs %.2f ys %.2f"
+                                " blend %d filters %zu cxadd %.0f,%.0f,%.0f mul %.2f,%.2f,%.2f\n",
                                 depth * 2, "", d.name.empty() ? "-" : d.name.c_str(), kind, d.definition() ? d.definition()->id : -1, d.depth, d.clipDepth,
                                 b.xMin / 20, b.yMin / 20, b.xMax / 20,
-                                b.yMax / 20, d.visible ? "visible" : "HIDDEN", d.cxform.aMul, d.matrix.a, d.matrix.d);
-                    if (depth < 4) d.forEachChild([&](flash::DisplayObject& c) { tree(c, depth + 1); });
+                                b.yMax / 20, d.visible ? "visible" : "HIDDEN", d.cxform.aMul, d.matrix.a, d.matrix.d, d.blendMode,
+                                d.filters.size(), d.cxform.rAdd, d.cxform.gAdd, d.cxform.bAdd, d.cxform.rMul, d.cxform.gMul,
+                                d.cxform.bMul);
+                    if (depth < 8) d.forEachChild([&](flash::DisplayObject& c) { tree(c, depth + 1); });
                 };
                 if (auto* d = as::resolvePath(&r, treePath)) tree(*d, 0);
                 else std::printf("  %s: not found\n", treePath.c_str());
@@ -791,6 +845,7 @@ int main(int argc, char** argv) {
             }
         }
         if (screenshot.empty()) return 0;
+        interpolation = headlessInterpolation;
         renderFrame();
         if (!saveBmp(surf, screenshot.c_str())) return 1;
         std::printf("wrote %s (frame %d)\n", screenshot.c_str(), viewed ? viewed->currentFrame() : 0);
@@ -823,6 +878,9 @@ int main(int argc, char** argv) {
         return true;
     };
     bool redraw = true;  // the frame changed since it was last rendered
+    // Draw every display refresh, with moving objects placed between the last two game
+    // ticks; the game itself still ticks at its own frame rate.
+    bool smooth = !noInterpolation;
 
     // Audio output: the mixer runs on SDL's audio thread.
     SDL_AudioDeviceID audioDevice = 0;
@@ -845,7 +903,30 @@ int main(int argc, char** argv) {
     double acc = 0;
     Uint64 last = SDL_GetPerformanceCounter();
     bool running = true;
+    // Frames render on the worker threads while this thread waits for the display's
+    // vsync to present the previous one, so slow frames don't drop to every other refresh.
+    // Input and game ticks only run between renders: scripts change the display list.
+    std::future<void> rendering;
+    int framesShown = 0;
+    Uint64 fpsSince = SDL_GetPerformanceCounter();
+    auto finishRendering = [&]() {
+        if (!rendering.valid()) return;
+        rendering.get();
+        SDL_UpdateTexture(tex, nullptr, surf.pixels.data(), surf.width * 4);
+        framesShown++;
+        // Rendered frames per second in the title (the game's own counter shows its ticks).
+        double secs = (SDL_GetPerformanceCounter() - fpsSince) / (double)SDL_GetPerformanceFrequency();
+        if (player && secs >= 1) {
+            char title[96];
+            std::snprintf(title, sizeof title, "Super Mario 63 — %.0f fps, %dx%d%s", framesShown / secs, surf.width,
+                          surf.height, smooth ? "" : " (smooth motion off)");
+            SDL_SetWindowTitle(win, title);
+            framesShown = 0;
+            fpsSince = SDL_GetPerformanceCounter();
+        }
+    };
     while (running) {
+        finishRendering();
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
@@ -857,6 +938,11 @@ int main(int argc, char** argv) {
                         if (e.key.keysym.sym == SDLK_F11 && !e.key.repeat) {
                             bool full = SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP;
                             SDL_SetWindowFullscreen(win, full ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                            break;
+                        }
+                        if (e.key.keysym.sym == SDLK_F3 && !e.key.repeat) {
+                            smooth = !smooth;
+                            redraw = true;
                             break;
                         }
                         if (e.key.keysym.sym == SDLK_F2 && !e.key.repeat) {
@@ -910,17 +996,18 @@ int main(int argc, char** argv) {
             steps++;
         }
         if (steps == 4) acc = 0;
-        // Render only when the game advanced (32 fps) or the window size changed; the
-        // display may refresh more often than that.
-        if (fitSurface() || steps || redraw) {
-            renderFrame();
-            SDL_UpdateTexture(tex, nullptr, surf.pixels.data(), surf.width * 4);
+        // Without smoothing, render only when the game advanced (32 fps) or the window size
+        // changed; the display may refresh more often than that.
+        interpolation = smooth && player ? std::clamp(acc / frameMs, 0.0, 1.0) : 1.0;
+        if (fitSurface() || steps || redraw || (smooth && player)) {
+            rendering = std::async(std::launch::async, renderFrame);
             redraw = false;
         }
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, nullptr, nullptr);
         SDL_RenderPresent(ren);
     }
+    if (rendering.valid()) rendering.get();
     reportMissing();
     if (audioDevice) SDL_CloseAudioDevice(audioDevice);
     as::flushSharedObjects();
