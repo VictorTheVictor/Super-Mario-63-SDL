@@ -239,6 +239,9 @@ private:
         std::vector<Filter> filters;
         uint8_t blendMode = 0;
         bool visible = true;
+        // Which of name/visible/filters/blendMode a command set explicitly: only those
+        // are reapplied to an object that survives a rewind (scripts may have changed it).
+        bool hasName = false, hasVisible = false, hasFilters = false, hasBlendMode = false;
     };
 
     void runFrame(int frame, bool runActions);

@@ -215,6 +215,27 @@ int main(int argc, char** argv) {
         holder["removeMovieClip"]();
     }
 
+    // A timeline rewind keeps what scripts set on objects that survive it (regression:
+    // the castle hall's hidden marker clips, 500x60 black boxes, became visible after
+    // its background went back a frame, leaving a black square).
+    if (auto* bgDef = movie.character(2539); bgDef && bgDef->kind == flash::Character::Sprite) {
+        auto bg = player.root().attach(bgDef, 75, "hallBG");
+        auto* bgClip = dynamic_cast<flash::MovieClip*>(bg.get());
+        bgClip->gotoFrame(2, false);
+        flash::DisplayObject* marker = bgClip->childAt(418);
+        CHECK(marker != nullptr);
+        if (marker) {
+            marker->visible = false;
+            std::string name = marker->name;
+            bgClip->gotoFrame(4, false);
+            bgClip->gotoFrame(3, false);  // rewind
+            CHECK(bgClip->childAt(418) == marker);
+            CHECK(!marker->visible);
+            CHECK(marker->name == name);
+        }
+        valueOf(bg.get())["removeMovieClip"]();
+    }
+
     // Absurd transforms must not corrupt memory when rendered (regression: NaN/Infinity
     // coordinates reached the rasterizer and indexed outside its coverage buffer).
     {

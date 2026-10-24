@@ -4,3 +4,4 @@ build/
 *.sol.txt
 /hires/
 __pycache__/
+sm63-dump-*

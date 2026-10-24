@@ -699,11 +699,11 @@ void MovieClip::gotoFrame(int frame, bool andPlay) {
             if (p.hasMatrix) s.matrix = p.matrix;
             if (p.hasCxform) s.cxform = p.cxform;
             if (p.hasRatio) s.ratio = p.ratio;
-            if (p.hasName) s.name = p.name;
+            if (p.hasName) s.name = p.name, s.hasName = true;
             if (p.hasClipDepth) s.clipDepth = p.clipDepth;
-            if (p.hasFilters) s.filters = p.filters;
-            if (p.hasBlendMode) s.blendMode = p.blendMode;
-            if (p.hasVisible) s.visible = p.visible;
+            if (p.hasFilters) s.filters = p.filters, s.hasFilters = true;
+            if (p.hasBlendMode) s.blendMode = p.blendMode, s.hasBlendMode = true;
+            if (p.hasVisible) s.visible = p.visible, s.hasVisible = true;
         }
     }
 
@@ -721,26 +721,29 @@ void MovieClip::gotoFrame(int frame, bool andPlay) {
     for (auto& [d, s] : target) {
         DisplayObject* existing = childAt(d);
         if (existing && !existing->placedByTimeline) continue;  // depth owned by script
-        auto apply = [&s](DisplayObject& o, bool keepTransform) {
+        // A new instance takes the whole timeline state. One that survives keeps what
+        // scripts gave it (name, _visible, filters, blend mode) unless the timeline sets
+        // that property itself, like Flash; e.g. hidden marker clips stay hidden.
+        auto apply = [&s](DisplayObject& o, bool keepTransform, bool fresh) {
             if (!keepTransform) {
                 o.matrix = s.matrix;
                 o.cxform = s.cxform;
                 o.invalidateTransform();
             }
             o.ratio = s.ratio;
-            o.name = s.name;
             o.clipDepth = s.clipDepth;
-            o.filters = s.filters;
-            o.blendMode = s.blendMode;
-            o.visible = s.visible;
+            if (fresh || s.hasName) o.name = s.name;
+            if (fresh || s.hasFilters) o.filters = s.filters;
+            if (fresh || s.hasBlendMode) o.blendMode = s.blendMode;
+            if (fresh || s.hasVisible) o.visible = s.visible;
         };
         if (existing) {
-            apply(*existing, existing->transformedByScript);
+            apply(*existing, existing->transformedByScript, false);
             continue;
         }
         auto created = instantiate(s.characterId);
         if (!created) continue;
-        apply(*created, false);
+        apply(*created, false, true);
         adopt(d, created, s.place);
     }
     currentFrame_ = frame;
