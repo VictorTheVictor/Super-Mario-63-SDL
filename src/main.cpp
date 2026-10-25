@@ -588,6 +588,7 @@ int main(int argc, char** argv) {
         swfPath = std::string(base ? base : "") + "Super_Mario_63_2010.swf";
         SDL_free(base);
     }
+    std::string attachSpec;  // --attach SYMBOL,PARENT,X,Y@FRAME: attachMovie for tests
     std::string symbol, screenshot, watch, inputSpec, calls, courseSpec, treePath, probes,
                 gotoSpec, trackSpec, setSpec, findText;
     int scale = 2, frames = 0, sampleEvery = 0, benchFrom = 0;
@@ -637,6 +638,7 @@ int main(int argc, char** argv) {
         else if (a == "--watch" && i + 1 < argc) watch = argv[++i], dump = true;
         else if (a == "--call" && i + 1 < argc) calls = argv[++i], dump = true;
         else if (a == "--course" && i + 1 < argc) courseSpec = argv[++i];
+        else if (a == "--attach" && i + 1 < argc) attachSpec = argv[++i];
         else if (a == "--tree" && i + 1 < argc) treePath = argv[++i], dump = true;
         else if (a == "--probe" && i + 1 < argc) probes = argv[++i], dump = true;
         else if (a == "--goto" && i + 1 < argc) gotoSpec = argv[++i];
@@ -1220,6 +1222,24 @@ int main(int argc, char** argv) {
             // _root.changecourse("StarIn", NAME, 0, 0, 0, 0)  (RemoveCourse + StartChar), called
             // like the game's own scripts do. (A 7th argument `true` leaves coursescale at 0,
             // which makes scripts that probe the level with it loop forever.)
+            if (player && !attachSpec.empty() && i == std::atoi(attachSpec.c_str() + attachSpec.rfind('@') + 1)) {
+                // --attach SYMBOL,PARENT,X,Y@FRAME: PARENT.attachMovie(SYMBOL) at (X, Y).
+                std::vector<std::string> parts;
+                std::string spec = attachSpec.substr(0, attachSpec.rfind('@'));
+                for (size_t a = 0, b; a <= spec.size(); a = b + 1) {
+                    b = spec.find(',', a);
+                    if (b == std::string::npos) b = spec.size();
+                    parts.push_back(spec.substr(a, b - a));
+                }
+                auto* parent = parts.size() >= 4 ? dynamic_cast<MovieClip*>(as::resolvePath(&player->root(), parts[1])) : nullptr;
+                auto* def = parent ? movie.exported(parts[0]) : nullptr;
+                if (auto obj = def ? parent->attach(def, 16384 + 9000, "attached") : nullptr) {
+                    obj->matrix.tx = std::atof(parts[2].c_str()) * 20;
+                    obj->matrix.ty = std::atof(parts[3].c_str()) * 20;
+                } else {
+                    std::fprintf(stderr, "--attach %s: failed\n", attachSpec.c_str());
+                }
+            }
             if (player && !courseSpec.empty() && i == std::atoi(courseSpec.c_str() + courseSpec.rfind('@') + 1)) {
                 as::Value root = as::valueOf(&player->root());
                 // NAME or NAME,TRANSITION,X,Y (e.g. C-1,lefttransition2,700,-250, as a door does),
@@ -1463,6 +1483,9 @@ int main(int argc, char** argv) {
                 // they do in play.
                 double total = 0;
                 int redrawn = 0;
+#if defined(__linux__) && !defined(__ANDROID__)
+                if (!profilePath.empty()) prof::start(profilePath.c_str());  // with --bench-from past the run
+#endif
                 for (int k = 0; k < timeRender; k++) {
                     tick();
                     if (windowView) applyView();
@@ -1473,8 +1496,11 @@ int main(int argc, char** argv) {
                     total += (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency();
                     redrawn += headlessGpu.layersRedrawn;
                 }
+#if defined(__linux__) && !defined(__ANDROID__)
+                if (!profilePath.empty()) prof::stop(profilePath.c_str());
+#endif
                 std::printf("GPU render: %.2f ms per frame (%d layers, %.1f redrawn per frame; %d text fields)\n",
-                            total / timeRender, headlessGpu.layers, (double)redrawn / timeRender, headlessGpu.software);
+                            total / timeRender, headlessGpu.layers, (double)redrawn / timeRender, headlessGpu.textFields);
             }
             if (ms) {
                 gl::BindFramebuffer(GL_FRAMEBUFFER, fbo[1]);
@@ -1495,7 +1521,7 @@ int main(int argc, char** argv) {
                     surf.pixels[(size_t)y * surf.width + x] = 0xFF000000u | (uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2];
                 }
             std::printf("GPU: %d layers (%d redrawn), %d text fields\n", headlessGpu.layers, headlessGpu.layersRedrawn,
-                        headlessGpu.software);
+                        headlessGpu.textFields);
         } else {
             renderFrame();
             if (timeRender > 0) {

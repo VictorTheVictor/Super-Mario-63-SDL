@@ -156,10 +156,12 @@ vsync. `--no-smooth-motion` (or F6) draws only at game ticks.
 
 F8 switches between the GPU renderer (OpenGL ES 2.0 on Android, OpenGL 2.1 on desktops;
 the default where it works) and the software renderer. Shapes, morph shapes, static text,
-drawing-API shapes and bitmap fills draw on the GPU (stencil-and-cover fills with 4x
-multisampling; see src/gpu/GpuRenderer.h); filters, blend modes, text fields and masks
-inside masks are drawn by the software renderer into textures, reused while they don't
-change. Without a usable OpenGL, SDL's renderer shows the software renderer's frames.
+drawing-API shapes, bitmap fills and text fields draw on the GPU (stencil-and-cover fills
+with 4x multisampling, outlines kept in vertex buffers); filtered, blended and cached
+objects draw into offscreen layers filtered by shader passes that do the software
+filters' arithmetic, kept while they don't change (see src/gpu/GpuRenderer.h). Without a
+usable OpenGL, SDL's renderer shows the software renderer's frames. `--attach
+SYMBOL,PARENT,X,Y@FRAME` attaches a library symbol for tests.
 `--gpu` takes headless screenshots with the GPU renderer (offscreen), `--software`
 starts the window on the software renderer, and `--time-render N` times N more draws of
 the screenshot frame.

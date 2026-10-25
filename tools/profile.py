@@ -49,7 +49,7 @@ for mod, offs in by_module.items():
 SKIP = {'prof::onSignal', '__sigaction', '__restore_rt', '__libc_sigaction'}
 expanded = []
 for s in stacks:
-    fns = [f for frame in s for f in names[frame]]
+    fns = [f for frame in s for f in names.get(frame, [frame])]  # e.g. linux-vdso, not a file
     # The innermost frames are the profiler's signal handler; skip past them.
     while fns and (fns[0] in SKIP or 'sigaction' in fns[0] or 'libc.so' in fns[0]):
         fns.pop(0)

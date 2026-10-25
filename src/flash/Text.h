@@ -137,6 +137,17 @@ public:
         double letterSpacing = 0;
     };
 
+    // The laid-out glyphs: shapes in glyph units, placed at (x, y) local twips, scaled.
+    struct PlacedGlyph {
+        const ShapeDef* shape;
+        double x, y, scale;
+        Color color;
+    };
+    const std::vector<PlacedGlyph>& placedGlyphs() {
+        if (dirty_) layout();
+        return glyphs_;
+    }
+
 private:
     struct Run {
         std::u32string text;
@@ -146,12 +157,6 @@ private:
         std::vector<Run> runs;
         uint8_t align = 0;
     };
-    struct PlacedGlyph {
-        const ShapeDef* shape;
-        double x, y, scale;
-        Color color;
-    };
-
     void layout();
     const FontCharacter* findFont(const std::string& face, bool bold, bool italic) const;
 

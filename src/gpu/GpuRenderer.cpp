@@ -16,22 +16,18 @@ using namespace flash;
 
 namespace {
 
-// Positions are pixels of the surface drawn into, rows top down; `flip` is 1 when the
-// surface's rows run bottom up (the window).
+// Positions are pixels of the surface drawn into (plus `offset`, the translation of cached
+// outlines), rows top down; `flip` is 1 when the surface's rows run bottom up (the window).
 const char* kVertex = R"(
 attribute vec2 pos;
-uniform vec2 viewport;
+uniform vec2 viewport, offset;
 uniform float flip;
 varying vec2 dev;
 void main() {
-    dev = pos;
-    float y = pos.y / viewport.y * 2.0;
-    gl_Position = vec4(pos.x / viewport.x * 2.0 - 1.0, flip > 0.5 ? 1.0 - y : y - 1.0, 0.0, 1.0);
+    dev = pos + offset;
+    float y = dev.y / viewport.y * 2.0;
+    gl_Position = vec4(dev.x / viewport.x * 2.0 - 1.0, flip > 0.5 ? 1.0 - y : y - 1.0, 0.0, 1.0);
 }
-)";
-
-const char* kStencilFragment = R"(
-void main() { gl_FragColor = vec4(0.0); }
 )";
 
 // Paints a pixel (device position `dev`, its center) the way the software rasterizer's
@@ -197,12 +193,12 @@ void main() {
 // Color matrix, in 0..255 units on straight color, as Flash defines it.
 const char* kMatrixFragment = R"(
 uniform mat4 matrix;
-uniform vec4 offset;
+uniform vec4 bias;
 void main() {
     vec4 p = at(src, floor(dev)) * 255.0;
     vec4 c = vec4(0.0, 0.0, 0.0, p.a);
     if (p.a > 0.0) c.rgb = p.rgb * 255.0 / p.a;
-    vec4 o = clamp(matrix * c + offset, 0.0, 255.0) / 255.0;
+    vec4 o = clamp(matrix * c + bias, 0.0, 255.0) / 255.0;
     gl_FragColor = vec4(o.rgb * o.a, o.a);
 }
 )";
@@ -299,7 +295,6 @@ GLint GpuRenderer::loc(GLuint program, const char* name) {
 
 bool GpuRenderer::init() {
     std::string filter = std::string(kFilterCommon);
-    stencilProgram_ = gl::program(kVertex, kStencilFragment, {"pos"});
     paintProgram_ = gl::program(kVertex, kPaintFragment, {"pos"});
     blurProgram_ = gl::program(kVertex, (filter + kBlurFragment).c_str(), {"pos"});
     alphaProgram_ = gl::program(kVertex, (filter + kAlphaFragment).c_str(), {"pos"});
@@ -307,7 +302,7 @@ bool GpuRenderer::init() {
     bevelProgram_ = gl::program(kVertex, (filter + kBevelFragment).c_str(), {"pos"});
     matrixProgram_ = gl::program(kVertex, (filter + kMatrixFragment).c_str(), {"pos"});
     compositeProgram_ = gl::program(kVertex, kCompositeFragment, {"pos"});
-    if (!stencilProgram_ || !paintProgram_ || !blurProgram_ || !alphaProgram_ || !glowProgram_ || !bevelProgram_ ||
+    if (!paintProgram_ || !blurProgram_ || !alphaProgram_ || !glowProgram_ || !bevelProgram_ ||
         !matrixProgram_ || !compositeProgram_)
         return false;
     GLuint p = paintProgram_;
@@ -325,8 +320,7 @@ bool GpuRenderer::init() {
     u_.cxOn = loc(p, "cxOn");
     u_.cxMul = loc(p, "cxMul");
     u_.cxAdd = loc(p, "cxAdd");
-    stencilViewport_ = loc(stencilProgram_, "viewport");
-    stencilFlip_ = loc(stencilProgram_, "flip");
+    u_.offset = loc(p, "offset");
     for (GLuint prog : {blurProgram_, alphaProgram_, glowProgram_, bevelProgram_, matrixProgram_, compositeProgram_}) {
         gl::UseProgram(prog);
         gl::Uniform1i(loc(prog, "src"), 0);
@@ -453,7 +447,7 @@ void GpuRenderer::bind(const Surface& s) {
     gl::BindFramebuffer(GL_FRAMEBUFFER, s.fbo);
     gl::Viewport(0, 0, s.w, s.h);
     float flip = s.bottomUp ? 1.f : 0.f;
-    for (GLuint p : {stencilProgram_, paintProgram_, compositeProgram_}) {
+    for (GLuint p : {paintProgram_, compositeProgram_}) {
         gl::UseProgram(p);
         gl::Uniform2f(loc(p, "viewport"), (float)s.w, (float)s.h);
         gl::Uniform1f(loc(p, "flip"), flip);
@@ -515,7 +509,7 @@ void GpuRenderer::render(as::Player& player, const Movie& movie, int width, int 
                          double scale, double originX, double originY) {
     movie_ = &movie;
     frame_++;
-    layers = layersRedrawn = software = 0;
+    layers = layersRedrawn = textFields = 0;
     renderSettings.scale = scale;
     renderSettings.interpolation = std::clamp(interpolation, 0.0, 1.0);
     renderSettings.layerCache = nullptr;
@@ -581,8 +575,15 @@ void GpuRenderer::render(as::Player& player, const Movie& movie, int width, int 
     for (auto it = cache_.begin(); it != cache_.end();) {
         if (frame_ - it->second.lastFrame > 60) {
             release(it->second.target);
-            if (it->second.textField) delete it->second.target;
             it = cache_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = geometry_.begin(); it != geometry_.end();) {
+        if (frame_ - it->second.lastFrame > 300) {
+            if (it->second.vbo) gl::DeleteBuffers(1, &it->second.vbo);
+            it = geometry_.erase(it);
         } else {
             ++it;
         }
@@ -620,21 +621,25 @@ void GpuRenderer::drawObject(DisplayObject& o, const Matrix& parent, const Color
         if (c.empty()) return;
         setClip(c);
     }
-    if (dynamic_cast<TextField*>(&o)) drawTextField(o, parent, parentCx);
-    else if (needsLayer(o)) drawLayer(o, parent, parentCx);
+    if (needsLayer(o)) drawLayer(o, parent, parentCx);
     else drawContent(o, parent * o.drawMatrix(), parentCx * o.cxform);
     if (o.displayClip) setClip(saved);
 }
 
 void GpuRenderer::drawContent(DisplayObject& o, const Matrix& m, const ColorTransform& cx) {
     if (auto* s = dynamic_cast<ShapeObject*>(&o)) {
-        drawShape(static_cast<ShapeCharacter*>(s->definition())->def, m, cx);
+        const ShapeDef& def = static_cast<ShapeCharacter*>(s->definition())->def;
+        drawShape(def, m, cx, &def, 0);
     } else if (auto* mo = dynamic_cast<MorphObject*>(&o)) {
-        drawShape(static_cast<MorphShapeCharacter*>(mo->definition())->at(mo->ratio), m, cx);
+        // Keyed by the morph and its ratio: the interpolated shapes' cache can be trimmed.
+        drawShape(static_cast<MorphShapeCharacter*>(mo->definition())->at(mo->ratio), m, cx, mo->definition(),
+                  mo->ratio + 1u);
     } else if (dynamic_cast<StaticTextObject*>(&o)) {
         drawStaticText(o, m, cx);
+    } else if (dynamic_cast<TextField*>(&o)) {
+        drawTextField(o, m, cx);
     } else if (auto* mc = dynamic_cast<MovieClip*>(&o)) {
-        if (const ShapeDef* d = mc->drawnShape()) drawShape(*d, m, cx);
+        if (const ShapeDef* d = mc->drawnShape()) drawShape(*d, m, cx, nullptr, 0);
         drawChildren(*mc, m, cx);
     } else if (dynamic_cast<ButtonObject*>(&o)) {
         o.forEachChild([&](DisplayObject& c) { drawObject(c, m, cx); });
@@ -706,7 +711,8 @@ void GpuRenderer::drawMaskGroupLayer(MovieClip&, DisplayObject& mask,
 
 // ---------------------------------------------------------------- shapes
 
-void GpuRenderer::drawShape(const ShapeDef& shape, const Matrix& m, const ColorTransform& cx) {
+void GpuRenderer::drawShape(const ShapeDef& shape, const Matrix& m, const ColorTransform& cx, const void* key,
+                            uint32_t variant) {
     const Rect& sb = shape.bounds;
     if (!sb.empty()) {
         Rect b = m.apply(sb);
@@ -715,26 +721,44 @@ void GpuRenderer::drawShape(const ShapeDef& shape, const Matrix& m, const ColorT
             return;
     }
     double scale = std::sqrt(std::fabs(m.a * m.d - m.b * m.c));
+    // Outlines are kept (in vertex buffers) per shape and transform without its
+    // translation, which is added when drawing: moving shapes cost no geometry work.
+    // Drawing-API shapes (no key) change, so they are built each time.
+    Matrix linear{m.a, m.b, m.c, m.d, 0, 0};
+    uint32_t part = 0;
+    auto draw = [&](const std::function<void(Rasterizer&)>& build, double hw, const FillStyle* style, Color color) {
+        IntRect box;
+        bool ok;
+        if (key) {
+            ok = stencilGeometry(geometry({key, variant, part, m.a, m.b, m.c, m.d, hw}, build), m.tx, m.ty, box);
+        } else {
+            rast_.reset();
+            build(rast_);
+            ok = stencilOutline(box);
+        }
+        if (ok) paint(box, style, color, m, cx);
+    };
     for (const auto& layer : shape.layers) {
         for (const FillPath& fp : layer.fills) {
+            part++;
             if (fp.style < 0 || fp.style >= (int)shape.fills.size()) continue;
             const FillStyle& fs = shape.fills[fp.style];
             if (fs.isBitmap()) {
                 auto* c = movie_->character(fs.bitmapId);
                 if (!c || c->kind != Character::Bitmap) continue;  // "no bitmap" fills draw nothing
             }
-            rast_.reset();
-            rast_.addPath(fp.edges, m);
-            fill(&fs, {}, m, cx);
+            draw([&](Rasterizer& r) { r.addPath(fp.edges, key ? linear : m); }, 0, &fs, {});
         }
         for (const StrokePath& sp : layer.strokes) {
+            part++;
             if (sp.style < 0 || sp.style >= (int)shape.lines.size()) continue;
             const LineStyle& ls = shape.lines[sp.style];
             double w = ls.width * ((ls.noHScale || ls.noVScale) ? 0.05 * renderSettings.scale : scale);
             double hw = std::max(0.5 * renderSettings.scale, w / 2);
-            rast_.reset();
-            for (const auto& pl : sp.polylines) rast_.addStroke(pl, m, hw);
-            fill(ls.hasFill && !ls.fill.isBitmap() ? &ls.fill : nullptr, ls.color, m, cx);
+            draw([&](Rasterizer& r) {
+                     for (const auto& pl : sp.polylines) r.addStroke(pl, key ? linear : m, hw);
+                 },
+                 hw, ls.hasFill && !ls.fill.isBitmap() ? &ls.fill : nullptr, ls.color);
         }
     }
 }
@@ -752,15 +776,22 @@ void GpuRenderer::drawStaticText(DisplayObject& o, const Matrix& m, const ColorT
         double s = rec.height / font->emSize;
         for (const auto& g : rec.glyphs) {
             if (g.index >= 0 && g.index < (int)font->glyphs.size()) {
-                Matrix gm = base * Matrix{s, 0, 0, s, x, y};
-                rast_.reset();
-                for (const auto& layer : font->glyphs[g.index].layers)
-                    for (const FillPath& fp : layer.fills) rast_.addPath(fp.edges, gm);
-                fill(nullptr, rec.color, gm, cx);
+                drawGlyph(font->glyphs[g.index], base * Matrix{s, 0, 0, s, x, y}, rec.color, cx);
             }
             x += g.advance;
         }
     }
+}
+
+void GpuRenderer::drawGlyph(const ShapeDef& glyph, const Matrix& m, Color color, const ColorTransform& cx) {
+    // All of a glyph's paths in one color (glyph shapes belong to fonts, so they last).
+    Matrix linear{m.a, m.b, m.c, m.d, 0, 0};
+    const Geometry& g = geometry({&glyph, 0, 0, m.a, m.b, m.c, m.d, 0}, [&](Rasterizer& r) {
+        for (const auto& layer : glyph.layers)
+            for (const FillPath& fp : layer.fills) r.addPath(fp.edges, linear);
+    });
+    IntRect box;
+    if (stencilGeometry(g, m.tx, m.ty, box)) paint(box, nullptr, color, m, cx);
 }
 
 bool GpuRenderer::stencilOutline(IntRect& box) {
@@ -784,15 +815,65 @@ bool GpuRenderer::stencilOutline(IntRect& box) {
     float ax = (float)segs[0].x0, ay = (float)segs[0].y0;
     for (const auto& s : segs) verts_.insert(verts_.end(), {ax, ay, (float)s.x0, (float)s.y0, (float)s.x1, (float)s.y1});
     rast_.reset();
-    gl::UseProgram(stencilProgram_);
+    startStencil();
+    gl::BindBuffer(GL_ARRAY_BUFFER, 0);
+    gl::VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, verts_.data());
+    gl::DrawArrays(GL_TRIANGLES, 0, (GLsizei)(verts_.size() / 2));
+    gl::ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    return true;
+}
+
+void GpuRenderer::startStencil() {
+    gl::UseProgram(paintProgram_);
     gl::ColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     gl::StencilMask(0x7F);
     gl::StencilFunc(GL_ALWAYS, 0, 0xFF);
     gl::StencilOpSeparate(GL_FRONT, GL_KEEP, GL_KEEP, GL_INCR_WRAP);
     gl::StencilOpSeparate(GL_BACK, GL_KEEP, GL_KEEP, GL_DECR_WRAP);
+}
+
+const GpuRenderer::Geometry& GpuRenderer::geometry(const GeoKey& key, const std::function<void(Rasterizer&)>& build) {
+    Geometry& g = geometry_[key];
+    g.lastFrame = frame_;
+    if (g.built) return g;
+    g.built = true;
+    rast_.reset();
+    build(rast_);
+    const auto& segs = rast_.segments();
+    if (!segs.empty()) {
+        g.x0 = g.y0 = 1e30;
+        g.x1 = g.y1 = -1e30;
+        verts_.clear();
+        float ax = (float)segs[0].x0, ay = (float)segs[0].y0;
+        for (const auto& s : segs) {
+            g.x0 = std::min({g.x0, s.x0, s.x1});
+            g.x1 = std::max({g.x1, s.x0, s.x1});
+            g.y0 = std::min({g.y0, s.y0, s.y1});
+            g.y1 = std::max({g.y1, s.y0, s.y1});
+            verts_.insert(verts_.end(), {ax, ay, (float)s.x0, (float)s.y0, (float)s.x1, (float)s.y1});
+        }
+        g.count = (GLsizei)(verts_.size() / 2);
+        gl::GenBuffers(1, &g.vbo);
+        gl::BindBuffer(GL_ARRAY_BUFFER, g.vbo);
+        gl::BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(verts_.size() * sizeof(float)), verts_.data(), GL_STATIC_DRAW);
+        gl::BindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+    rast_.reset();
+    return g;
+}
+
+bool GpuRenderer::stencilGeometry(const Geometry& g, double ox, double oy, IntRect& box) {
+    if (!g.count) return false;
+    box = intersect(clip_, {(int)std::floor(g.x0 + ox), (int)std::floor(g.y0 + oy), (int)std::ceil(g.x1 + ox),
+                            (int)std::ceil(g.y1 + oy)});
+    if (box.empty()) return false;
+    startStencil();
+    gl::Uniform2f(u_.offset, (float)ox, (float)oy);
+    gl::BindBuffer(GL_ARRAY_BUFFER, g.vbo);
+    gl::VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    gl::DrawArrays(GL_TRIANGLES, 0, g.count);
     gl::BindBuffer(GL_ARRAY_BUFFER, 0);
-    gl::VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, verts_.data());
-    gl::DrawArrays(GL_TRIANGLES, 0, (GLsizei)(verts_.size() / 2));
+    gl::Uniform2f(u_.offset, 0, 0);
     gl::ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     return true;
 }
@@ -807,7 +888,11 @@ void GpuRenderer::drawBox(const IntRect& box) {
 
 void GpuRenderer::fill(const FillStyle* fs, Color color, const Matrix& toDevice, const ColorTransform& cx) {
     IntRect box;
-    if (!stencilOutline(box)) return;
+    if (stencilOutline(box)) paint(box, fs, color, toDevice, cx);
+}
+
+void GpuRenderer::paint(const IntRect& box, const FillStyle* fs, Color color, const Matrix& toDevice,
+                        const ColorTransform& cx) {
     gl::UseProgram(paintProgram_);
     auto setInverse = [&](const Matrix& inv) {
         gl::Uniform3f(u_.inv0, (float)inv.a, (float)inv.c, (float)inv.tx);
@@ -1053,7 +1138,7 @@ GpuRenderer::Target* GpuRenderer::applyFilters(Target* layer, const std::vector<
                 for (int row = 0; row < 4; row++)
                     for (int col = 0; col < 4; col++) cols[col * 4 + row] = f.matrix[row * 5 + col];
                 gl::UniformMatrix4fv(loc(matrixProgram_, "matrix"), 1, GL_FALSE, cols);
-                gl::Uniform4f(loc(matrixProgram_, "offset"), f.matrix[4], f.matrix[9], f.matrix[14], f.matrix[19]);
+                gl::Uniform4f(loc(matrixProgram_, "bias"), f.matrix[4], f.matrix[9], f.matrix[14], f.matrix[19]);
                 pass(matrixProgram_, out);
                 release(layer);
                 layer = out;
@@ -1127,50 +1212,44 @@ void GpuRenderer::composite(GLuint texture, int texW, int texH, int x0, int y0, 
 
 // ---------------------------------------------------------------- text fields
 
-void GpuRenderer::drawTextField(DisplayObject& o, const Matrix& parent, const ColorTransform& parentCx) {
-    Matrix m = parent * o.drawMatrix();
-    Rect b = m.apply(o.localBounds());
-    if (b.empty() || !std::isfinite(b.xMin) || !std::isfinite(b.yMin) || !std::isfinite(b.xMax) ||
-        !std::isfinite(b.yMax))
+void GpuRenderer::drawTextField(DisplayObject& o, const Matrix& m, const ColorTransform& cx) {
+    // As TextField::render: background, border and glyphs, clipped to the field's bounds.
+    auto& tf = static_cast<TextField&>(o);
+    Rect dev = m.apply(tf.bounds);
+    if (!std::isfinite(dev.xMin) || !std::isfinite(dev.yMin) || !std::isfinite(dev.xMax) || !std::isfinite(dev.yMax))
         return;
-    IntRect area = intersect(clip_, {(int)std::floor(b.xMin) - 2, (int)std::floor(b.yMin) - 2,
-                                     (int)std::ceil(b.xMax) + 2, (int)std::ceil(b.yMax) + 2});
-    if (area.empty()) return;
-    software++;
-    RenderHash h;
-    o.hashForRender(h, false);
-    h.add(m);
-    h.add(parentCx * o.cxform);
-    for (int v : {area.x0, area.y0, area.x1, area.y1}) h.add((uint64_t)(int64_t)v);
-    CachedLayer& c = cache_[&o];
-    c.lastFrame = frame_;
-    c.textField = true;
-    int w = area.x1 - area.x0, hgt = area.y1 - area.y0;
-    if (!c.target) c.target = new Target;
-    if (!c.target->texture || c.hash != h.h || c.w != w || c.h != hgt) {
-        flash::Surface s;
-        s.resize(w, hgt);
-        Matrix lp = Matrix::translate(-area.x0, -area.y0) * parent;
-        renderDisplayObject(o, rast_, s, {0, 0, w, hgt}, lp, parentCx, *movie_, true);
-        if (!c.target->texture) c.target->texture = makeTexture();
-        gl::ActiveTexture(GL_TEXTURE0);
-        gl::BindTexture(GL_TEXTURE_2D, c.target->texture);
-        if (c.target->texW != w || c.target->texH != hgt) {
-            gl::TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, hgt, 0, GL_RGBA, GL_UNSIGNED_BYTE, s.pixels.data());
-            c.target->texW = w;
-            c.target->texH = hgt;
-        } else {
-            gl::TexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, hgt, GL_RGBA, GL_UNSIGNED_BYTE, s.pixels.data());
+    IntRect c = intersect(clip_, {(int)std::floor(dev.xMin), (int)std::floor(dev.yMin), (int)std::ceil(dev.xMax),
+                                  (int)std::ceil(dev.yMax)});
+    if (c.empty()) return;
+    textFields++;
+    IntRect saved = clip_;
+    setClip(c);
+    const Rect& b = tf.bounds;
+    if (tf.background || tf.border) {
+        Point q[4] = {m.apply(b.xMin, b.yMin), m.apply(b.xMax, b.yMin), m.apply(b.xMax, b.yMax), m.apply(b.xMin, b.yMax)};
+        if (tf.background) {
+            rast_.reset();
+            rast_.closedPolygon(q, 4);
+            fill(nullptr, tf.backgroundColor, m, cx);
         }
-        c.hash = h.h;
-        c.x0 = area.x0;
-        c.y0 = area.y0;
-        c.w = w;
-        c.h = hgt;
+        if (tf.border) {
+            rast_.reset();
+            for (int i = 0; i < 4; i++) {
+                Point a = q[i], e = q[(i + 1) % 4];
+                double dx = e.x - a.x, dy = e.y - a.y, len = std::hypot(dx, dy);
+                if (len < 1e-9) continue;
+                double hw = 0.5 * renderSettings.scale;  // one stage pixel wide
+                double nx = -dy / len * hw, ny = dx / len * hw;
+                Point s[4] = {{a.x + nx, a.y + ny}, {e.x + nx, e.y + ny}, {e.x - nx, e.y - ny}, {a.x - nx, a.y - ny}};
+                rast_.closedPolygon(s, 4);
+            }
+            fill(nullptr, tf.borderColor, m, cx);
+        }
     }
-    // Uploaded words are B, G, R, A bytes; the color transform is already applied.
-    composite(c.target->texture, c.target->texW, c.target->texH, c.x0, c.y0, c.w, c.h, ColorTransform{}, BlendNormal,
-              true);
+    for (const auto& g : tf.placedGlyphs()) {
+        drawGlyph(*g.shape, m * Matrix{g.scale, 0, 0, g.scale, g.x, g.y}, g.color, cx);
+    }
+    setClip(saved);
 }
 
 // ---------------------------------------------------------------- presenting CPU frames
