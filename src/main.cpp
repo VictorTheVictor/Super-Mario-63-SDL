@@ -818,6 +818,31 @@ int main(int argc, char** argv) {
                 c.displayTransform = flash::Matrix::translate(left ? wx0 * 20 : (wx0 + ww - W) * 20, 0);
                 adjusted.push_back(c.weak_from_this());
             });
+        // The game's pause menu ("Pause New", sprite 795, in Stats; its content is sprite 794):
+        // its white panel (shape 629) stretches over the window like the screen filter, and
+        // its copy of the counters along the top goes to the window's edges like the HUD's.
+        auto adjust = [&](flash::DisplayObject& c, const flash::Matrix& world) {
+            flash::Matrix parent = c.parent() ? c.parent()->worldMatrix() : flash::Matrix{};
+            c.displayTransform = parent.inverse() * world * parent;
+            adjusted.push_back(c.weak_from_this());
+        };
+        if (auto* stats = dynamic_cast<MovieClip*>(as::resolvePath(&player->root(), "_root.Stats")))
+            stats->forEachChild([&](flash::DisplayObject& pause) {
+                if (!pause.definition() || pause.definition()->id != 795) return;
+                pause.forEachChild([&](flash::DisplayObject& content) {
+                    if (!content.definition() || content.definition()->id != 794) return;
+                    content.forEachChild([&](flash::DisplayObject& c) {
+                        if (c.definition() && c.definition()->id == 629) {
+                            adjust(c, flash::Matrix::translate(wx0 * 20, wy0 * 20) * flash::Matrix::scale(ww / W, wh / H));
+                            return;
+                        }
+                        flash::Rect b = c.worldMatrix().apply(c.localBounds());
+                        double cx = (b.xMin + b.xMax) / 40;
+                        if (b.empty() || b.yMax / 20 > 40 || std::fabs(cx - W / 2) < 60) return;
+                        adjust(c, flash::Matrix::translate(cx < W / 2 ? wx0 * 20 : (wx0 + ww - W) * 20, 0));
+                    });
+                });
+            });
         player->root().forEachChild([&](flash::DisplayObject& c) {
             if (c.definition() && c.definition()->id == 2102) player->hiddenObjects.push_back(&c);
         });
@@ -878,7 +903,7 @@ int main(int argc, char** argv) {
     // (_root.Invincible, as with the game's own power-ups) and his health is refilled
     // every tick against everything else (spikes, lava).
     bool noclip = false;
-    double noclipX = 0, noclipY = 0;
+    double noclipX = 0, noclipY = 0, noclipVX = 0, noclipVY = 0;
     as::Value invincibleBeforeNoclip;
     // Directions currently held on a game controller (D-pad or left stick).
     bool padLeft = false, padRight = false, padUp = false, padDown = false;
@@ -956,8 +981,15 @@ int main(int argc, char** argv) {
         if (noclip) {
             const Uint8* k = SDL_GetKeyboardState(nullptr);
             double speed = (k[SDL_SCANCODE_LSHIFT] || k[SDL_SCANCODE_RSHIFT]) ? 24 : 8;
-            noclipX += speed * ((k[SDL_SCANCODE_RIGHT] || padRight) - (k[SDL_SCANCODE_LEFT] || padLeft));
-            noclipY += speed * ((k[SDL_SCANCODE_DOWN] || padDown) - (k[SDL_SCANCODE_UP] || padUp));
+            // Speed eases toward the held direction's, so letting go glides to a stop.
+            double wantX = speed * ((k[SDL_SCANCODE_RIGHT] || padRight) - (k[SDL_SCANCODE_LEFT] || padLeft));
+            double wantY = speed * ((k[SDL_SCANCODE_DOWN] || padDown) - (k[SDL_SCANCODE_UP] || padUp));
+            noclipVX += (wantX - noclipVX) * 0.25;
+            noclipVY += (wantY - noclipVY) * 0.25;
+            if (std::fabs(noclipVX) < 0.05) noclipVX = 0;
+            if (std::fabs(noclipVY) < 0.05) noclipVY = 0;
+            noclipX += noclipVX;
+            noclipY += noclipVY;
             pinChar();
         }
         player->tick();
@@ -1504,6 +1536,7 @@ int main(int argc, char** argv) {
                             if (c.isObject()) {
                                 noclipX = as::getMember(c, as::intern("_x")).toNumber();
                                 noclipY = as::getMember(c, as::intern("_y")).toNumber();
+                                noclipVX = noclipVY = 0;
                             }
                             std::printf("noclip %s\n", noclip ? "on (arrows fly, Shift faster)" : "off");
                             break;

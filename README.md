@@ -102,8 +102,9 @@ the HUD's counters, hint line and quality box to the window's edges, stretch the
 dark overlay (the castle before enough stars) over the whole window, show door and
 course transitions letterboxed, fill menus with their own background color (the course
 select's white page), and continue the ground past a level's left and right ends by
-mirroring the terrain about each end (shapes only, not trees or other objects; not in
-the castle or other indoor courses; see src/EdgeFill.h). F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off: draw as fast as possible, to measure rendering), F8 toggles building
+mirroring the terrain about each end (ground, platforms and clouds; not trees, signs or
+other objects; not in the castle or other indoor courses; see src/EdgeFill.h). The game's
+pause menu's white panel covers the window and its counters move to the edges too. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off: draw as fast as possible, to measure rendering), F8 toggles building
 nested filter layers once (on by default; off draws them per strip as before, slower, and can
 differ by 1/255 in a few pixels), F6 toggles
 smooth motion. The game's fps counter shows the frames actually drawn per second.
@@ -125,7 +126,7 @@ the executable (cmake/embed_assets.cmake, which also embeds the pause sound). Fr
 Game controllers (SDL GameController, e.g. Xbox layout): D-pad or left stick moves, A jumps,
 B uses FLUDD, X spins, Y ground pounds and talks (Z), the bumpers also press Z. They press
 the same keys the game reads from the keyboard (S, C, X, Z and the arrows).
-Debugging: F2 toggles noclip (arrow keys fly Mario through walls, Shift for speed; he is invulnerable meanwhile), F3
+Debugging: F2 toggles noclip (arrow keys fly Mario through walls, Shift for speed, easing to a stop; he is invulnerable meanwhile), F3
 shows every object's outline over the frame (shape edges in cyan; boxes for clips in
 green, text in yellow, buttons in magenta, masks in orange; invisible objects such as the
 collision clips in red), F9 writes `sm63-dump-N.txt` (display tree) and `sm63-dump-N.bmp`.

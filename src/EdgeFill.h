@@ -5,10 +5,11 @@
 // A course (`_root.Course`) is built from parts sharing one level-local origin, among them
 // BackGFX (background shapes and objects) and FrontGFX (the terrain), which the camera
 // scrolls. At each end, the terrain shapes (and background shapes reaching that end) are
-// mirrored about the end, shown only beyond everything the level draws. Only shapes are
-// copied, never objects (trees, coins, signs are clips). The copies follow their part's
-// position and color transform (night and lighting tints). Castle and other indoor
-// courses get none.
+// mirrored, each about where its own drawing ends, and drawn below BackGFX so whatever the
+// level itself draws beyond an end stays in front. Only ground-like shapes are copied:
+// not objects (trees, coins, signs are clips) or small shapes (arrow signs, posts). The
+// copies follow their part's position and color transform (night and lighting tints).
+// Castle and other indoor courses get none.
 
 #include <memory>
 #include <vector>
