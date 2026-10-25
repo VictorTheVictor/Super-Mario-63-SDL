@@ -1526,6 +1526,26 @@ int main(int argc, char** argv) {
         double y = as::getMember(sm, as::intern("_y")).toNumber() + dy;
         as::setMember(sm, as::intern("_y"), std::clamp(y, std::min(0.0, -height + 100), 0.0));
     };
+    // Dragging scrolls whichever is open (the pause menu's Star Map, or the credits) and,
+    // let go while moving, it glides on and slows down; the mouse wheel scrolls in steps.
+    auto scrollMenus = [&](double dy) {
+        if (mixer.paused()) scrollStarMap(dy);
+        else if (!inLevel(*player)) scrollCredits(dy);
+    };
+    double glide = 0;          // stage pixels per second, after a drag
+    Uint32 lastDragAt = 0;     // when the last drag movement came
+    Uint32 lastGlideAt = SDL_GetTicks();
+    auto updateGlide = [&]() {
+        double dt = std::min((SDL_GetTicks() - lastGlideAt) / 1000.0, 0.1);
+        lastGlideAt = SDL_GetTicks();
+        if (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK) return;  // still dragging
+        if (std::fabs(glide) < 5) {
+            glide = 0;
+            return;
+        }
+        scrollMenus(glide * dt);
+        glide *= std::exp(-dt * 4);  // about a third of a second to slow right down
+    };
     Uint32 lastPadPoll = SDL_GetTicks();
     auto updatePad = [&]() {
         std::set<int> held;
@@ -1795,8 +1815,11 @@ int main(int argc, char** argv) {
                             SDL_GetWindowSize(win, &ww, &wh);
                             SDL_GetRendererOutputSize(ren, &ow, &oh);
                             double dy = e.motion.yrel * (double)oh / std::max(1, wh) / viewScale;
-                            if (mixer.paused()) scrollStarMap(dy);
-                            else if (!inLevel(*player)) scrollCredits(dy);
+                            scrollMenus(dy);
+                            // The drag's speed, smoothed over the last few movements.
+                            double dt = std::max((SDL_GetTicks() - lastDragAt) / 1000.0, 0.004);
+                            glide = glide * 0.5 + dy / dt * 0.5;
+                            lastDragAt = SDL_GetTicks();
                         }
                         double mx = e.motion.x, my = e.motion.y;
                         {
@@ -1811,11 +1834,20 @@ int main(int argc, char** argv) {
                         break;
                     }
                     case SDL_MOUSEBUTTONDOWN:
+                        glide = 0;  // a touch stops the glide
                         mouseClicking = e.button.which != SDL_TOUCH_MOUSEID;
                         if (e.button.button == SDL_BUTTON_LEFT) player->mouseDown();
                         mouseClicking = false;
                         break;
+                    case SDL_MOUSEWHEEL: {
+                        double notches = e.wheel.y * (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1 : 1);
+                        scrollMenus(notches * 30);  // up shows earlier lines
+                        glide = 0;
+                        break;
+                    }
                     case SDL_MOUSEBUTTONUP:
+                        // Let go after holding still: no glide.
+                        if (SDL_GetTicks() - lastDragAt > 80) glide = 0;
                         mouseClicking = e.button.which != SDL_TOUCH_MOUSEID;
                         if (e.button.button == SDL_BUTTON_LEFT) player->mouseUp();
                         mouseClicking = false;
@@ -1839,7 +1871,7 @@ int main(int argc, char** argv) {
                 SDL_SetWindowTitle(win, title);
             }
         }
-        if (player) updatePad();
+        if (player) updatePad(), updateGlide();
         if (player) updatePauseSound();
         updateCursor();
         Uint64 now = SDL_GetPerformanceCounter();
