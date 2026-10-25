@@ -233,6 +233,18 @@ as::Value pauseMenuQuit(const as::Value& self, as::Args) {
     return as::Value();
 }
 
+// In a level the menu keeps the prompt's own two buttons: the first resumes, the second
+// leaves the level.
+as::Value pauseMenuContinue(const as::Value& self, as::Args) {
+    as::setMember(self, as::intern("portAction"), as::Value(std::string("continue")));
+    return as::Value();
+}
+
+as::Value pauseMenuExitLevel(const as::Value& self, as::Args) {
+    as::setMember(self, as::intern("portAction"), as::Value(std::string("exitlevel")));
+    return as::Value();
+}
+
 // The prompt's own closing: fade out over 10 frames, then unpause and remove it.
 as::Value pauseMenuFade(const as::Value& self, as::Args) {
     double count = as::getMember(self, as::intern("count")).toNumber() + 1;
@@ -838,21 +850,27 @@ int main(int argc, char** argv) {
         if (bw < 1 || bh < 1) return;
         player->backdrop = sky;
         auto& out = player->backdropPlacements;
+        // Copies overlap by one device pixel: where two meet at a fractional pixel, each
+        // one's antialiased edge then lies on the other's solid interior instead of both
+        // half covering the black behind them (a thin dark seam).
+        double overlap = 1 / viewScale;
         if (viewMode == SkyRepeat || viewMode == SkyMirror) {
             // Tiles covering the window; with SkyMirror every other row is flipped vertically,
             // so the sky's top and bottom edges meet copies of themselves.
-            for (int j = (int)std::floor((wy0 - y0) / bh); y0 + j * bh < wy0 + wh; j++)
-                for (int i = (int)std::floor((wx0 - x0) / bw); x0 + i * bw < wx0 + ww; i++) {
+            double sx = bw - overlap, sy = bh - overlap;  // tile steps
+            for (int j = (int)std::floor((wy0 - y0) / sy); y0 + j * sy < wy0 + wh; j++)
+                for (int i = (int)std::floor((wx0 - x0) / sx); x0 + i * sx < wx0 + ww; i++) {
                     if (viewMode == SkyMirror && (j & 1))
-                        out.push_back(flash::Matrix::translate(i * bw, j * bh + 2 * y0 + bh) * flash::Matrix::scale(1, -1));
+                        out.push_back(flash::Matrix::translate(i * sx, j * sy + 2 * y0 + bh) * flash::Matrix::scale(1, -1));
                     else
-                        out.push_back(flash::Matrix::translate(i * bw, j * bh));
+                        out.push_back(flash::Matrix::translate(i * sx, j * sy));
                 }
         } else if (viewMode == SkyExtendLeft || viewMode == SkyExtendRight) {
             // The sky beside a copy of itself mirrored left to right (so the edges where they
             // meet match), the pair centered horizontally in the window.
-            double left = wx0 + (ww - 2 * bw) / 2;  // the pair's left edge
-            double sky = viewMode == SkyExtendLeft ? left + bw : left, mirror = viewMode == SkyExtendLeft ? left : left + bw;
+            double left = wx0 + (ww - 2 * bw + overlap) / 2;  // the pair's left edge
+            double sky = viewMode == SkyExtendLeft ? left + bw - overlap : left;
+            double mirror = viewMode == SkyExtendLeft ? left : left + bw - overlap;
             out.push_back(flash::Matrix::translate(sky - x0, 0));
             out.push_back(flash::Matrix::translate(mirror + bw + x0, 0) * flash::Matrix::scale(-1, 1));
         } else if (viewMode == SkyZoom) {
@@ -918,11 +936,14 @@ int main(int argc, char** argv) {
         if (noclip) pinChar();
     };
 
-    // Pause menu: Esc or controller Start in a level (not on the title or menus) pauses
-    // the game and its sound and shows three buttons: Save (and resume), Save & Exit, and
-    // Don't Save (exits without saving).
+    // Pause menu: Esc or controller Start while playing (not on the title or menus) pauses
+    // the game and its sound. In the castle it shows three buttons: Save (and resume),
+    // Save & Exit, and Don't Save (exits without saving). In a level (_root.Playinglevel
+    // set by entering a painting, or the level designer) it shows the prompt's two
+    // buttons: the first resumes, the second leaves the level for the castle.
     std::weak_ptr<flash::DisplayObject> pauseMenu;
     bool pauseMenuClosing = false;
+    bool pauseMenuInLevel = false;
     bool quitRequested = false;  // the menu's Quit
     auto rootValue = [&]() { return as::valueOf(&player->root()); };
     auto closePauseMenu = [&](flash::DisplayObject& menu) {
@@ -950,9 +971,11 @@ int main(int argc, char** argv) {
         flash::DisplayObject* d = as::displayOf(menu);
         if (!d) return true;
         as::setMember(root, as::intern("PauseGame"), true);
-        // The third button: the high score screen's green "Save & Exit" (not exported, so
-        // attached by character), which calls _parent.SAVEXIT().
-        if (auto* mc = dynamic_cast<MovieClip*>(d); mc && movie.character(7506))
+        pauseMenuInLevel = as::getMember(root, as::intern("Playinglevel")).toNumber() > 0 ||
+                           as::getMember(root, as::intern("PlayingLevelDesigner")).toBoolean();
+        // The castle's third button: the high score screen's green "Save & Exit" (not
+        // exported, so attached by character), which calls _parent.SAVEXIT().
+        if (auto* mc = dynamic_cast<MovieClip*>(d); mc && movie.character(7506) && !pauseMenuInLevel)
             mc->attach(movie.character(7506), 17 - as::kDepthOffset, "3");
         pauseMenu = d->shared_from_this();
         pauseMenuClosing = false;
@@ -972,9 +995,9 @@ int main(int argc, char** argv) {
             auto* f = dynamic_cast<as::Function*>(as::getMember(m, as::intern(name)).object());
             if (f && f->native != fn) as::setMember(m, as::intern(name), as::Value(as::Runtime::get().newNative(fn, name)));
         };
-        rewire("SAVE", pauseMenuSave);
-        rewire("SAVEXIT", pauseMenuSaveExit);
-        rewire("NOSAVE", pauseMenuQuit);
+        rewire("SAVE", pauseMenuInLevel ? pauseMenuContinue : pauseMenuSave);
+        rewire("NOSAVE", pauseMenuInLevel ? pauseMenuExitLevel : pauseMenuQuit);
+        if (!pauseMenuInLevel) rewire("SAVEXIT", pauseMenuSaveExit);
         // The high score screen's spacing, in this order: Save, Save & Exit, Don't Save. While
         // the prompt's intro slides its two buttons in, they are only shown moved (setting
         // their position would stop the timeline animating them) and Save & Exit follows
@@ -983,7 +1006,7 @@ int main(int argc, char** argv) {
         as::Value first = as::getMember(m, as::intern("1"));
         as::Value third = as::getMember(m, as::intern("3"));
         bool introDone = menuClip && menuClip->currentFrame() == menuClip->totalFrames();
-        if (first.isObject()) {
+        if (first.isObject() && !pauseMenuInLevel) {
             for (auto [option, x] : {std::pair{"1", -145.5}, {"3", -2.8}, {"2", 143.2}}) {
                 as::Value button = as::getMember(m, as::intern(option));
                 flash::DisplayObject* d = as::displayOf(button);
@@ -1021,6 +1044,21 @@ int main(int argc, char** argv) {
                 std::printf("pause menu: saved\n");
                 if (!pauseMenuClosing) closePauseMenu(*menu);
             }
+        } else if (action == "continue") {
+            as::setMember(m, as::intern("portAction"), as::Value());
+            if (!pauseMenuClosing) closePauseMenu(*menu);
+        } else if (action == "exitlevel") {
+            as::setMember(m, as::intern("portAction"), as::Value());
+            // Leave the way the game does when Mario loses his last life: _root.LifeLost()
+            // with none left resets the lives, flags a game over and returns to the castle
+            // (in the level designer, it goes back to the designer).
+            as::Value root = rootValue();
+            as::callFunction(as::getMember(m, as::intern("removeMovieClip")), m, {});
+            as::setMember(root, as::intern("PauseGame"), false);
+            if (!as::getMember(root, as::intern("PlayingLevelDesigner")).toBoolean())
+                as::setMember(root, as::intern("CharLives"), -1);
+            as::callFunction(as::getMember(root, as::intern("LifeLost")), root, {});
+            std::printf("pause menu: left the level\n");
         } else if (action == "quit") {
             as::setMember(m, as::intern("portAction"), as::Value());
             std::printf("pause menu: quit\n");

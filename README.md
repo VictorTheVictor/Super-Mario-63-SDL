@@ -78,9 +78,11 @@ the SWF onto the executable passes it as the path too.
 
 Symbol viewer keys: Space play/pause, Left/Right step a frame, Escape quit.
 Game mode: input goes to the game; Shift+Escape quits. In a level, Escape (or a
-controller's Start button) pauses the game and its sound and opens a menu with the
-high score screen's three buttons: Save (saves and resumes), Save & Exit, and Don't Save
-(quits without saving); Escape again resumes. F11 toggles fullscreen. F5 cycles
+controller's Start button) pauses the game and its sound and opens a menu; Escape again
+resumes. In the castle it has the high score screen's three buttons: Save (saves and
+resumes), Save & Exit, and Don't Save (quits without saving). In a level it has the star
+prompt's two buttons: the blue one resumes, the red one leaves the level for the castle as
+if Mario had lost his last life (their artwork still reads Save / Don't Save). F11 toggles fullscreen. F5 cycles
 how the window is filled:
 
 1. letterboxed (only the stage, black bars);
