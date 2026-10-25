@@ -92,14 +92,22 @@ public:
     // Adds the stroked outline of a polyline (round joins and caps).
     void addStroke(const std::vector<Edge>& edges, const Matrix& m, double halfWidthPx);
 
-private:
+    // The accumulated geometry: line segments in device pixels (closed outlines, filled
+    // by nonzero winding), for drawing elsewhere (the GPU renderer).
     struct Seg {
         double x0, y0, x1, y1;
     };
+    const std::vector<Seg>& segments() const { return segs_; }
+
+private:
     std::vector<Seg> segs_;
     std::vector<float> acc_;           // coverage accumulation; all zero between fills
     std::vector<int> rowMin_, rowMax_;  // touched cell range per row of the current fill
 };
+
+// A gradient fill's 256 colors through the color transform, premultiplied ARGB, as fills
+// sample them (index = position 0..1 * 255, rounded, after the spread mode).
+void gradientRamp(const FillStyle& f, const ColorTransform& cx, uint32_t ramp[256]);
 
 // Draws a whole shape definition with the given transform.
 void drawShape(Rasterizer& r, Surface& dst, const IntRect& clip, const ShapeDef& shape,

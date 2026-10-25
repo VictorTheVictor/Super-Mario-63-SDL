@@ -152,6 +152,18 @@ jumps of more than 100 px snap instead of sliding. Scripts and hit tests always 
 real positions. Frames render on the worker threads while the previous one waits for
 vsync. `--no-smooth-motion` (or F6) draws only at game ticks.
 
+### GPU renderer
+
+F8 switches between the GPU renderer (OpenGL ES 2.0 on Android, OpenGL 2.1 on desktops;
+the default where it works) and the software renderer. Shapes, morph shapes, static text,
+drawing-API shapes and bitmap fills draw on the GPU (stencil-and-cover fills with 4x
+multisampling; see src/gpu/GpuRenderer.h); filters, blend modes, text fields and masks
+inside masks are drawn by the software renderer into textures, reused while they don't
+change. Without a usable OpenGL, SDL's renderer shows the software renderer's frames.
+`--gpu` takes headless screenshots with the GPU renderer (offscreen), `--software`
+starts the window on the software renderer, and `--time-render N` times N more draws of
+the screenshot frame.
+
 ### Resolution and rendering
 
 The game renders at the window's real pixel size, so a
@@ -173,6 +185,7 @@ Headless options for testing and profiling (with `--frames N`):
     --threads 1 --no-layer-cache --no-occlusion   # reference renderer for comparisons
     --interpolate 0.5                       # screenshot halfway between the last two ticks
     --window 1920x1080                      # screenshot a window of that size
+    --gpu --time-render 30                  # GPU renderer screenshot, and its draw time
     --course C-1@F | --course C-1,lefttransition2,700,-250@F | --course StartInsideofCastle()@F
     --course gotoCourseSelect(1)@F          # a starter function with a number argument
                                             # switch course at frame F (as the game does)

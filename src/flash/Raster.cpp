@@ -642,6 +642,8 @@ void Rasterizer::fill(Surface& dst, const IntRect& clip, const Paint& paint) {
     paintRows(nearest);
 }
 
+void gradientRamp(const FillStyle& f, const ColorTransform& cx, uint32_t ramp[256]) { buildRamp(f, cx, ramp); }
+
 void drawShape(Rasterizer& r, Surface& dst, const IntRect& clip, const ShapeDef& shape,
                const Matrix& m, const ColorTransform& cx, const Movie& movie) {
     const Rect& sb = shape.bounds;

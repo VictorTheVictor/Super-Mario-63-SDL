@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
@@ -38,6 +39,8 @@
 #include "game/Scripts.h"
 #include "EmbeddedAssets.h"
 #include "MenuCursor.h"
+#include "gpu/Gl.h"
+#include "gpu/GpuRenderer.h"
 #include "MissingSwfImage.h"
 #include "flash/Effects.h"
 #include "flash/Raster.h"
@@ -590,7 +593,8 @@ int main(int argc, char** argv) {
     int scale = 2, frames = 0, sampleEvery = 0, benchFrom = 0;
     double renderScale = 1;  // headless output size, in multiples of the stage size
     int windowW = 0, windowH = 0;  // headless: --window WxH
-    bool letterboxOption = false, lockZoomOption = false;
+    bool letterboxOption = false, lockZoomOption = false, softwareOption = false, gpuOption = false;
+    int timeRender = 0;  // --time-render N: draw the screenshot frame N more times, timed
     int renderThreads = 0;   // 0: one per hardware thread
     bool noLayerCache = false, noOcclusion = false;
     bool noInterpolation = false;  // --no-smooth-motion: draw only at game ticks
@@ -610,6 +614,9 @@ int main(int argc, char** argv) {
         else if (a == "--no-layer-cache") noLayerCache = true;
         else if (a == "--letterbox") letterboxOption = true;
         else if (a == "--lock-zoom") lockZoomOption = true;
+        else if (a == "--software") softwareOption = true;
+        else if (a == "--gpu") gpuOption = true;
+        else if (a == "--time-render" && i + 1 < argc) timeRender = std::atoi(argv[++i]);
         else if (a == "--no-occlusion") noOcclusion = true;
         else if (a == "--no-smooth-motion") noInterpolation = true;
         else if (a == "--debug-overlay") debugOverlay = true;
@@ -1406,7 +1413,88 @@ int main(int argc, char** argv) {
         if (screenshot.empty()) return 0;
         interpolation = headlessInterpolation;
         if (windowView) applyView();
-        renderFrame();
+        if (gpuOption && player) {
+            // --gpu: the GPU renderer draws the screenshot, in a hidden window's framebuffer.
+            if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+                std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
+                return 1;
+            }
+            SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
+            SDL_Window* hidden = SDL_CreateWindow("sm63", 0, 0, surf.width, surf.height, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+            SDL_GLContext ctx = hidden ? SDL_GL_CreateContext(hidden) : nullptr;
+            const char* missing = "";
+            GpuRenderer headlessGpu;
+            if (!ctx || !gl::load(missing) || !headlessGpu.init()) {
+                std::fprintf(stderr, "no OpenGL for --gpu (%s %s)\n", SDL_GetError(), missing);
+                return 1;
+            }
+            // A hidden window's own framebuffer can't be read back on every driver: draw into
+            // an offscreen one (multisampled, then resolved, where the driver can).
+            int fw = surf.width, fh = surf.height;
+            bool ms = gl::RenderbufferStorageMultisample && gl::BlitFramebuffer;
+            GLuint fbo[2] = {}, rb[3] = {};
+            gl::GenFramebuffers(2, fbo);
+            gl::GenRenderbuffers(3, rb);
+            auto storage = [&](GLuint r, GLenum format, bool multi) {
+                gl::BindRenderbuffer(GL_RENDERBUFFER, r);
+                if (multi) gl::RenderbufferStorageMultisample(GL_RENDERBUFFER, 4, format, fw, fh);
+                else gl::RenderbufferStorage(GL_RENDERBUFFER, format, fw, fh);
+            };
+            gl::BindFramebuffer(GL_FRAMEBUFFER, fbo[0]);
+            storage(rb[0], gl::kRgba8, ms);
+            storage(rb[1], gl::kDepth24Stencil8, ms);
+            gl::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb[0]);
+            gl::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rb[1]);
+            gl::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rb[1]);
+            if (gl::CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+                std::fprintf(stderr, "--gpu: offscreen framebuffer incomplete\n");
+                return 1;
+            }
+            double s = viewScale > 0 ? viewScale : (double)surf.width / W;
+            auto draw = [&] {
+                headlessGpu.render(*player, movie, surf.width, surf.height, interpolation, s, viewScale > 0 ? viewX : 0,
+                                   viewScale > 0 ? viewY : 0);
+            };
+            draw();
+            if (timeRender > 0) {
+                gl::Finish();
+                Uint64 t0 = SDL_GetPerformanceCounter();
+                for (int k = 0; k < timeRender; k++) draw();
+                gl::Finish();
+                double ms = (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency() / timeRender;
+                std::printf("GPU render: %.2f ms per frame (%d software-drawn, %d redrawn)\n", ms, headlessGpu.fallbacks,
+                            headlessGpu.fallbacksRedrawn);
+            }
+            if (ms) {
+                gl::BindFramebuffer(GL_FRAMEBUFFER, fbo[1]);
+                storage(rb[2], gl::kRgba8, false);
+                gl::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb[2]);
+                gl::BindFramebuffer(gl::kReadFramebuffer, fbo[0]);
+                gl::BindFramebuffer(gl::kDrawFramebuffer, fbo[1]);
+                gl::BlitFramebuffer(0, 0, fw, fh, 0, 0, fw, fh, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                gl::BindFramebuffer(GL_FRAMEBUFFER, fbo[1]);
+            }
+            if (GLenum err = gl::GetError()) std::fprintf(stderr, "--gpu: GL error 0x%x\n", err);
+            std::vector<uint8_t> rgba((size_t)surf.width * surf.height * 4);
+            gl::ReadPixels(0, 0, surf.width, surf.height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+            for (int y = 0; y < surf.height; y++)
+                for (int x = 0; x < surf.width; x++) {
+                    const uint8_t* p = &rgba[((size_t)(surf.height - 1 - y) * surf.width + x) * 4];
+                    // The framebuffer holds R, G, B, A bytes: back to ARGB words.
+                    surf.pixels[(size_t)y * surf.width + x] = 0xFF000000u | (uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2];
+                }
+            std::printf("GPU: %d software-drawn objects (%d redrawn)\n", headlessGpu.fallbacks, headlessGpu.fallbacksRedrawn);
+        } else {
+            renderFrame();
+            if (timeRender > 0) {
+                auto t0 = std::chrono::steady_clock::now();
+                for (int k = 0; k < timeRender; k++) renderFrame();
+                double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / timeRender;
+                std::printf("software render: %.2f ms per frame\n", ms);
+            }
+        }
         if (!saveBmp(surf, screenshot.c_str())) return 1;
         std::printf("wrote %s (frame %d)\n", screenshot.c_str(), viewed ? viewed->currentFrame() : 0);
         reportMissing();
@@ -1423,18 +1511,58 @@ int main(int argc, char** argv) {
     // bars hidden).
     windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 #endif
-    SDL_Window* win = SDL_CreateWindow("Super Mario 63", SDL_WINDOWPOS_CENTERED,
-                                       SDL_WINDOWPOS_CENTERED, W * scale, H * scale, windowFlags);
+    // OpenGL (ES 2.0 on Android, 2.1 on desktops) presents the frames, and with the GPU
+    // renderer (F8) draws them too; 4x multisampling antialiases its edges, and the
+    // stencil buffer counts shapes' winding. Without a usable context, SDL's own renderer
+    // presents the software renderer's frames.
+#ifdef __ANDROID__
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#endif
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
+    SDL_Window* win = SDL_CreateWindow("Super Mario 63", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, W * scale,
+                                       H * scale, windowFlags | SDL_WINDOW_OPENGL);
+    if (!win) {  // no multisampling
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
+        SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
+        win = SDL_CreateWindow("Super Mario 63", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, W * scale, H * scale,
+                               windowFlags | SDL_WINDOW_OPENGL);
+    }
+    if (!win) win = SDL_CreateWindow("Super Mario 63", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, W * scale,
+                                     H * scale, windowFlags);
+    SDL_GLContext glContext = win ? SDL_GL_CreateContext(win) : nullptr;
+    GpuRenderer gpu;
+    bool useGl = false;
+    if (glContext) {
+        const char* missing = "";
+        if (!gl::load(missing)) std::fprintf(stderr, "OpenGL: %s is missing; using SDL's renderer\n", missing);
+        else if (!gpu.init()) std::fprintf(stderr, "OpenGL: shaders failed; using SDL's renderer\n");
+        else useGl = true;
+        if (useGl)
+            std::printf("OpenGL: %s, %s\n", (const char*)gl::GetString(GL_VERSION), (const char*)gl::GetString(GL_RENDERER));
+        else
+            SDL_GL_DeleteContext(glContext), glContext = nullptr;
+    }
+    // F8: the GPU renderer (on by default when OpenGL works) or the software one.
+    bool gpuMode = useGl && !softwareOption;
     // Vsync starts off (frames drawn as fast as possible); F7 turns it on.
-    SDL_Renderer* ren = SDL_CreateRenderer(win, -1, 0);
+    SDL_Renderer* ren = useGl ? nullptr : SDL_CreateRenderer(win, -1, 0);
+    if (useGl) SDL_GL_SetSwapInterval(0);
     bool vsync = false;
     SDL_Texture* tex = nullptr;
+    auto outputSize = [&](int& w, int& h) {
+        if (useGl) SDL_GL_GetDrawableSize(win, &w, &h);
+        else SDL_GetRendererOutputSize(ren, &w, &h);
+    };
     // The frame fills the window, the stage centered in it at the largest scale that fits
     // (see applyView), rendered at the window's real pixel size so vector art stays sharp
     // in a large or fullscreen window.
     auto fitSurface = [&]() {
         int ow = W, oh = H;
-        SDL_GetRendererOutputSize(ren, &ow, &oh);
+        outputSize(ow, oh);
         double s = std::max(0.25, std::min((double)ow / W, (double)oh / H));
         int sw = std::max(1, ow), sh = std::max(1, oh);
         double vx = std::floor((ow - W * s) / 2), vy = std::floor((oh - H * s) / 2);
@@ -1442,11 +1570,13 @@ int main(int argc, char** argv) {
         viewScale = s;
         viewX = vx;
         viewY = vy;
-        if (tex && sw == surf.width && sh == surf.height) return !sameView;
-        if (tex) SDL_DestroyTexture(tex);
+        if (sw == surf.width && sh == surf.height && (useGl || tex)) return !sameView;
         surf.resize(sw, sh);
-        tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, sw, sh);
-        SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);  // already 1:1; avoid rounding blur
+        if (!useGl) {
+            if (tex) SDL_DestroyTexture(tex);
+            tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, sw, sh);
+            SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);  // already 1:1; avoid rounding blur
+        }
         return true;
     };
     bool redraw = true;  // the frame changed since it was last rendered
@@ -1663,23 +1793,27 @@ int main(int argc, char** argv) {
             std::snprintf(text, sizeof text, "fps: %s%.1f", fps < 10 ? "0" : "", fps);
             as::setMember(as::valueOf(counter.get()), as::intern("frtxt"), as::Value(std::string(text)));
         };
-    auto finishRendering = [&]() {
-        if (!rendering.valid()) return;
-        rendering.get();
-        SDL_UpdateTexture(tex, nullptr, surf.pixels.data(), surf.width * 4);
+    auto countFrame = [&]() {
         framesShown++;
         // Rendered frames per second in the title (the game's own counter shows its ticks).
         double secs = (SDL_GetPerformanceCounter() - fpsSince) / (double)SDL_GetPerformanceFrequency();
         if (player && secs >= 0.5) renderFps = framesShown / secs;
         if (player && secs >= 1) {
             char title[128];
-            std::snprintf(title, sizeof title, "Super Mario 63 — %.0f fps, %dx%d%s%s%s", framesShown / secs, surf.width,
-                          surf.height, smooth ? "" : " (smooth motion off)", noclip ? " [NOCLIP]" : "",
-                          vsync ? " (vsync on)" : "");
+            std::snprintf(title, sizeof title, "Super Mario 63 — %.0f fps, %dx%d, %s%s%s%s", framesShown / secs,
+                          surf.width, surf.height, gpuMode ? "GPU" : "software",
+                          smooth ? "" : " (smooth motion off)", noclip ? " [NOCLIP]" : "", vsync ? " (vsync on)" : "");
             SDL_SetWindowTitle(win, title);
             framesShown = 0;
             fpsSince = SDL_GetPerformanceCounter();
         }
+    };
+    auto finishRendering = [&]() {
+        if (!rendering.valid()) return;
+        rendering.get();
+        if (useGl) gpu.upload(surf);
+        else SDL_UpdateTexture(tex, nullptr, surf.pixels.data(), surf.width * 4);
+        countFrame();
     };
     while (running) {
         finishRendering();
@@ -1729,6 +1863,18 @@ int main(int argc, char** argv) {
                             std::printf("wrote sm63-dump-%d.txt and .bmp\n", dumps);
                             break;
                         }
+                        // F8: GPU or software renderer.
+                        if (e.key.keysym.sym == SDLK_F8 && !e.key.repeat) {
+                            if (!useGl) {
+                                std::printf("no GPU renderer (OpenGL ES 2.0 / 2.1 unavailable)\n");
+                                break;
+                            }
+                            if (rendering.valid()) rendering.get();
+                            gpuMode = !gpuMode;
+                            std::printf("%s renderer\n", gpuMode ? "GPU" : "software");
+                            redraw = true;
+                            break;
+                        }
                         if (e.key.keysym.sym == SDLK_F10 && !e.key.repeat) {
                             zoomLock = !zoomLock;
                             lockedZoom = 100;
@@ -1755,7 +1901,7 @@ int main(int argc, char** argv) {
                         // measures rendering speed; expect tearing).
                         if (e.key.keysym.sym == SDLK_F7 && !e.key.repeat) {
                             vsync = !vsync;
-                            if (SDL_RenderSetVSync(ren, vsync) != 0)
+                            if ((useGl ? SDL_GL_SetSwapInterval(vsync ? 1 : 0) : SDL_RenderSetVSync(ren, vsync)) != 0)
                                 std::fprintf(stderr, "could not change vsync: %s\n", SDL_GetError());
                             std::printf("vsync %s\n", vsync ? "on" : "off");
                             break;
@@ -1804,7 +1950,7 @@ int main(int argc, char** argv) {
                         if ((e.motion.state & SDL_BUTTON_LMASK) && viewScale > 0) {
                             int ww, wh, ow, oh;
                             SDL_GetWindowSize(win, &ww, &wh);
-                            SDL_GetRendererOutputSize(ren, &ow, &oh);
+                            outputSize(ow, oh);
                             double dy = e.motion.yrel * (double)oh / std::max(1, wh) / viewScale;
                             scrollMenus(dy);
                             // The drag's speed, smoothed over the last few movements.
@@ -1817,7 +1963,7 @@ int main(int argc, char** argv) {
                             // Window coordinates -> output pixels -> stage pixels.
                             int ww, wh, ow, oh;
                             SDL_GetWindowSize(win, &ww, &wh);
-                            SDL_GetRendererOutputSize(ren, &ow, &oh);
+                            outputSize(ow, oh);
                             mx = (mx * ow / std::max(1, ww) - viewX) / viewScale;
                             my = (my * oh / std::max(1, wh) - viewY) / viewScale;
                         }
@@ -1878,21 +2024,43 @@ int main(int argc, char** argv) {
         // Without smoothing, render only when the game advanced (32 fps) or the window size
         // changed; the display may refresh more often than that.
         interpolation = smooth && player ? std::clamp(acc / frameMs, 0.0, 1.0) : 1.0;
-        if (fitSurface() || steps || redraw || (smooth && player)) {
+        bool draw = fitSurface() || steps || redraw || (smooth && player);
+        if (gpuMode && player) {
+            // The GPU renderer draws on this thread, straight into the window.
+            if (draw) {
+                applyView();  // after ticks: objects may have been replaced
+                gpu.render(*player, movie, surf.width, surf.height, interpolation, viewScale, viewX, viewY);
+                SDL_GL_SwapWindow(win);
+                countFrame();
+                redraw = false;
+            } else {
+                SDL_Delay(1);
+            }
+            continue;
+        }
+        if (draw) {
             applyView();  // after ticks: objects may have been replaced
             rendering = std::async(std::launch::async, renderFrame);
             redraw = false;
         }
-        SDL_RenderClear(ren);
-        SDL_RenderCopy(ren, tex, nullptr, nullptr);
-        SDL_RenderPresent(ren);
+        if (useGl) {
+            int ow = surf.width, oh = surf.height;
+            outputSize(ow, oh);
+            gpu.present(ow, oh);
+            SDL_GL_SwapWindow(win);
+        } else {
+            SDL_RenderClear(ren);
+            SDL_RenderCopy(ren, tex, nullptr, nullptr);
+            SDL_RenderPresent(ren);
+        }
     }
     if (rendering.valid()) rendering.get();
     reportMissing();
     if (audioDevice) SDL_CloseAudioDevice(audioDevice);
     as::flushSharedObjects();
-    SDL_DestroyTexture(tex);
-    SDL_DestroyRenderer(ren);
+    if (tex) SDL_DestroyTexture(tex);
+    if (ren) SDL_DestroyRenderer(ren);
+    if (glContext) SDL_GL_DeleteContext(glContext);
     SDL_DestroyWindow(win);
     SDL_Quit();
     return 0;
