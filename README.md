@@ -127,6 +127,9 @@ scrolls the Star Map (which also scrolls by dragging it with the mouse or a fing
 A drag let go while moving glides on and slows down; the mouse wheel scrolls both in
 steps, without gliding.
 
+Touch: tapping a sign or Toad while its Z prompt shows reads it (or talks), and while
+one is talking a tap anywhere goes on (Z); headless, `F:tap:X,Y` taps at stage X, Y.
+
 Controllers also play every menu (title, main menu, story files, options, extras, level
 designer, course and star select, and the pause menu): the D-pad or left stick moves a
 cursor between the screen's buttons (the mouse hovers the selected one), A selects the

@@ -156,10 +156,11 @@ enum PadButton { PadA = 1, PadB = 2, PadStart = 4, PadLeft = 8, PadRight = 16, P
 
 // Scripted input for headless runs, e.g.
 // "2490:move:225,150;2500:click:225,150;2600:press:Enter;2700:hold:Right;2800:release:Right"
-// "3000:pad:A" presses a controller button (A, B, Start, Left, Right, Up, Down).
+// "3000:pad:A" presses a controller button (A, B, Start, Left, Right, Up, Down);
+// "3100:tap:225,150" is a touchscreen tap (reading a sign or talking to a Toad).
 struct InputEvent {
     int frame;
-    enum Kind { KeyDown, KeyUp, Move, MouseDown, MouseUp, PadDown, PadUp } kind;
+    enum Kind { KeyDown, KeyUp, Move, MouseDown, MouseUp, PadDown, PadUp, Tap } kind;
     int code = 0;
     double x = 0, y = 0;
 };
@@ -196,6 +197,9 @@ std::vector<InputEvent> parseInput(const std::string& spec) {
             out.push_back({frame, InputEvent::Move, 0, x, y});
             out.push_back({frame, InputEvent::MouseDown, 0, x, y});
             out.push_back({frame + 1, InputEvent::MouseUp, 0, x, y});
+        } else if (what == "tap") {
+            double x = std::atof(arg.c_str()), y = std::atof(arg.c_str() + arg.find(',') + 1);
+            out.push_back({frame, InputEvent::Tap, 0, x, y});
         } else if (what == "pad") {
             static const std::map<std::string, int> pads = {{"A", PadA}, {"B", PadB}, {"Start", PadStart},
                                                             {"Left", PadLeft}, {"Right", PadRight},
@@ -1171,6 +1175,48 @@ int main(int argc, char** argv) {
         return true;
     };
 
+    // Touch: tapping a sign or Toad while its Z prompt shows (Mario close enough to read
+    // or talk) presses Z, as if the player had. Signs show the prompt in a child `aa`,
+    // Toads in `bz`; its `aa` is 100 while it shows. While a sign or Toad is talking, a
+    // tap anywhere presses Z (next page, or close). (x, y): stage pixels.
+    auto tapToRead = [&](double x, double y) {
+        auto* course = as::resolvePath(&player->root(), "_root.Course");
+        if (!course || !inLevel(*player) || mixer.paused()) return false;
+        auto pressZ = [&] {
+            player->keyDown('Z', 'z');
+            keyPulses['Z'] = 3;
+            return true;
+        };
+        if (auto* mario = as::resolvePath(course, "Char")) {
+            std::string doing = as::getMember(as::valueOf(mario), as::intern("attackFrame")).toString();
+            if (doing == "Sign" || doing == "Talk") return pressZ();
+        }
+        // Where things are shown (presentation shifts included), as the tap sees them.
+        auto shown = [](const flash::DisplayObject& d) {
+            flash::Matrix m = d.displayMatrix();
+            for (const flash::DisplayObject* p = d.parent(); p; p = p->parent()) m = p->displayMatrix() * m;
+            return m;
+        };
+        bool hit = false;
+        std::function<void(flash::DisplayObject&)> visit = [&](flash::DisplayObject& d) {
+            if (hit || !d.visible) return;
+            if (auto* mc = dynamic_cast<MovieClip*>(&d))
+                for (const char* name : {"aa", "bz"})
+                    if (auto* prompt = mc->childByName(name)) {
+                        as::Value shownFlag = as::getMember(as::valueOf(prompt), as::intern("aa"));
+                        if (!shownFlag.isNumber() || shownFlag.toNumber() < 100) continue;
+                        flash::Rect b = shown(d).apply(d.localBounds());
+                        const double slack = 12 * 20;  // fingers are wide
+                        if (x * 20 >= b.xMin - slack && x * 20 <= b.xMax + slack && y * 20 >= b.yMin - slack &&
+                            y * 20 <= b.yMax + slack)
+                            hit = true;
+                    }
+            d.forEachChild(visit);
+        };
+        visit(*course);
+        return hit && pressZ();
+    };
+
     auto reportMissing = [&]() {
         if (player && !player->missingScripts().empty())
             std::printf("%zu frame scripts ran without a ported implementation\n",
@@ -1206,6 +1252,9 @@ int main(int argc, char** argv) {
                         case InputEvent::MouseUp: player->mouseUp(); break;
                         case InputEvent::PadDown: simPad |= e.code; break;
                         case InputEvent::PadUp: simPad &= ~e.code; break;
+                        case InputEvent::Tap:
+                            if (!tapToRead(e.x, e.y)) std::printf("tap at (%.0f, %.0f): nothing to read\n", e.x, e.y);
+                            break;
                     }
                 }
             if (player) padMenu(simPad, i * 1000.0 / movie.frameRate);
@@ -2013,6 +2062,14 @@ int main(int argc, char** argv) {
                     }
                     case SDL_MOUSEBUTTONDOWN:
                         glide = 0;  // a touch stops the glide
+                        if (e.button.which == SDL_TOUCH_MOUSEID && viewScale > 0) {
+                            int ww, wh, ow, oh;
+                            SDL_GetWindowSize(win, &ww, &wh);
+                            outputSize(ow, oh);
+                            double sx = (e.button.x * (double)ow / std::max(1, ww) - viewX) / viewScale;
+                            double sy = (e.button.y * (double)oh / std::max(1, wh) - viewY) / viewScale;
+                            if (tapToRead(sx, sy)) break;
+                        }
                         mouseClicking = e.button.which != SDL_TOUCH_MOUSEID;
                         if (e.button.button == SDL_BUTTON_LEFT) player->mouseDown();
                         mouseClicking = false;
