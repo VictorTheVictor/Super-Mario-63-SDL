@@ -444,7 +444,9 @@ void Movie::parseTags(const uint8_t* data, size_t size, Sprite& tl, bool isRoot)
                 int count = t.u16();
                 for (int i = 0; i < count; i++) {
                     uint16_t id = t.u16();
-                    exports_[t.str()] = id;
+                    std::string name = t.str();
+                    exports_[name] = id;
+                    exportsLower_.emplace(toLower(name), id);  // the first of a name wins
                 }
                 break;
             }

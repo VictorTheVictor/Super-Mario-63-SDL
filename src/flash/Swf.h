@@ -3,6 +3,7 @@
 // Scripts (DoAction / clip actions) are recorded by location only; the game logic
 // itself is provided by transpiled C++ code.
 
+#include <cctype>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -171,9 +172,13 @@ public:
         auto it = characters_.find(id);
         return it == characters_.end() ? nullptr : it->second.get();
     }
+    // Export names are matched ignoring case, as Flash does (the game attaches
+    // "C-OCamEdge", exported as "C-OCamedge").
     Character* exported(const std::string& name) const {
         auto it = exports_.find(name);
-        return it == exports_.end() ? nullptr : character(it->second);
+        if (it != exports_.end()) return character(it->second);
+        auto lower = exportsLower_.find(toLower(name));
+        return lower == exportsLower_.end() ? nullptr : character(lower->second);
     }
     const std::unordered_map<std::string, uint16_t>& exports() const { return exports_; }
     const std::unordered_map<uint16_t, std::unique_ptr<Character>>& characters() const {
@@ -185,6 +190,11 @@ private:
 
     std::unordered_map<uint16_t, std::unique_ptr<Character>> characters_;
     std::unordered_map<std::string, uint16_t> exports_;
+    std::unordered_map<std::string, uint16_t> exportsLower_;  // lowercased names
+    static std::string toLower(std::string s) {
+        for (char& c : s) c = (char)std::tolower((unsigned char)c);
+        return s;
+    }
     std::vector<uint8_t> jpegTables_;
 };
 

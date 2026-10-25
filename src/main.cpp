@@ -314,8 +314,9 @@ std::string waitForSwfDrop(int scale) {
 bool inLevel(as::Player& player) {
     MovieClip& r = player.root();
     auto it = r.sprite()->labels.find("Courseframe");
-    return it != r.sprite()->labels.end() && r.currentFrame() == it->second &&
-           as::resolvePath(&r, "_root.Course") != nullptr;
+    // Not whether a course is loaded: between two courses (after a star, into the castle)
+    // there is a moment with none, which would flash the letterbox bars.
+    return it != r.sprite()->labels.end() && r.currentFrame() == it->second;
 }
 
 bool saveBmp(const Surface& s, const char* path) {
@@ -827,6 +828,7 @@ int main(int argc, char** argv) {
         player->hiddenObjects.clear();
         player->backdrop = nullptr;
         player->backdropPlacements.clear();
+        player->backdropClips.clear();
         for (auto& w : adjusted)
             if (auto d = w.lock()) d->displayTransform = {}, d->cacheAsLayer = false;
         adjusted.clear();
@@ -856,10 +858,26 @@ int main(int argc, char** argv) {
             auto clampAxis = [&](bool vertical, double& w0, double wsize, double size) {
                 double lo = -1e9, hi = 1e9, mid = (vertical ? W : H) / 2.0;
                 auto at = [&](double t) { return vertical ? blocked(mid, t) : blocked(t, mid); };
+                // The wall's edge between a free point and a blocked one, to 1/256 pixel: the
+                // camera moves by fractions of a pixel between ticks, and a whole-pixel edge
+                // would make the view jump back and forth (shake) as it follows.
+                auto edge = [&](double free, double wall) {
+                    for (int i = 0; i < 8; i++) {
+                        double t = (free + wall) / 2;
+                        (at(t) ? wall : free) = t;
+                    }
+                    return (free + wall) / 2;
+                };
                 for (int k = 0; k < wsize; k++)
-                    if (at(-k - 0.5)) { lo = -k; break; }
+                    if (at(-k - 0.5)) {
+                        lo = edge(-k + 0.5, -k - 0.5);
+                        break;
+                    }
                 for (int k = 0; k < wsize; k++)
-                    if (at(size + k + 0.5)) { hi = size + k; break; }
+                    if (at(size + k + 0.5)) {
+                        hi = edge(size + k - 0.5, size + k + 0.5);
+                        break;
+                    }
                 double shift = 0;  // how far the view moves (stage pixels)
                 if (hi - lo < wsize) {
                     shift = (lo + hi) / 2 - (w0 + wsize / 2);
@@ -977,19 +995,30 @@ int main(int argc, char** argv) {
         });
         auto* sky = as::resolvePath(&player->root(), "_root.FarBackground");
         if (!sky) return;
-        flash::Rect b = sky->worldMatrix().apply(sky->localBounds());
-        double x0 = b.xMin / 20, bw = (b.xMax - b.xMin) / 20, bh = (b.yMax - b.yMin) / 20;
-        if (bw < 1 || bh < 1) return;
+        // Where the sky is drawn this frame (between ticks too).
+        flash::renderSettings.interpolation = interpolation;
+        flash::Matrix skyMatrix = (sky->parent() ? sky->parent()->worldMatrix() : flash::Matrix{}) * sky->drawMatrix();
+        flash::renderSettings.interpolation = 1;
+        flash::Rect b = skyMatrix.apply(sky->localBounds());
+        // Only the part of the sky on the stage is extended: art beyond the stage's edges
+        // (some skies are wider, with dark edges no one was meant to see) would otherwise
+        // show where the copies meet.
+        double s0 = std::max(b.xMin / 20, 0.0), s1 = std::min(b.xMax / 20, (double)W);
+        double sw = s1 - s0, bh = (b.yMax - b.yMin) / 20;
+        if (sw < 1 || bh < 1) return;
         player->backdrop = sky;
-        // The sky beside a copy of itself mirrored left to right (so the edges where they
-        // meet match), the pair centered horizontally in the window. The two overlap by one
-        // device pixel: where they meet at a fractional pixel, each one's antialiased edge
-        // then lies on the other's solid interior instead of both half covering the black
-        // behind them (a thin dark seam).
+        // That part beside a copy of itself mirrored left to right (so the edges where they
+        // meet match), the pair centered horizontally in the window, each copy drawn only
+        // within its own slot. The two overlap by one device pixel: where they meet at a
+        // fractional pixel, each one's antialiased edge then lies on the other's solid
+        // interior instead of both half covering the black behind them (a thin dark seam).
         double overlap = 1 / viewScale;
-        double left = wx0 + (ww - 2 * bw + overlap) / 2;  // the pair's left edge
-        player->backdropPlacements.push_back(flash::Matrix::translate(left + bw - overlap - x0, 0));
-        player->backdropPlacements.push_back(flash::Matrix::translate(left + bw + x0, 0) * flash::Matrix::scale(-1, 1));
+        double left = wx0 + (ww - 2 * sw + overlap) / 2;  // the pair's left edge
+        double mid = left + sw;  // where they meet
+        player->backdropPlacements.push_back(flash::Matrix::translate(mid - overlap - s0, 0));
+        player->backdropClips.push_back({mid - overlap, wy0, mid - overlap + sw, wy0 + wh});
+        player->backdropPlacements.push_back(flash::Matrix::translate(mid + s0, 0) * flash::Matrix::scale(-1, 1));
+        player->backdropClips.push_back({left, wy0, mid, wy0 + wh});
     };
     auto renderFrame = [&]() {
         if (player) {
@@ -1345,6 +1374,7 @@ int main(int argc, char** argv) {
                         },
                         "onEnterFrame"));
                 }
+                player->flushActions();
             }
             // --set "_root.Course.Char._x=600@2000;...": assign numbers at given frames
             for (size_t ss = 0; player && ss < setSpec.size();) {

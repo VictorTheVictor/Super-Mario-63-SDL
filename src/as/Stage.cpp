@@ -690,9 +690,14 @@ Value color_getRGB(const Value& self, Args) {
 Value color_setTransform(const Value& self, Args a) {
     DisplayObject* d = colorTarget(self);
     if (!d || !a[0].isObject()) return undefined;
+    // A value that isn't a number (NaN: Goomboss's hurt effect computes its tint from
+    // its parent's undefined hp) leaves that channel as it is instead of zeroing it,
+    // which turned the level black.
     auto apply = [&](const char* name, float& field, float scale) {
         Value v = getMember(a[0], intern(name));
-        if (!v.isUndefined()) field = (float)(v.toNumber() * scale);
+        if (v.isUndefined()) return;
+        double n = v.toNumber();
+        if (std::isfinite(n)) field = (float)(n * scale);
     };
     apply("ra", d->cxform.rMul, 0.01f);
     apply("ga", d->cxform.gMul, 0.01f);

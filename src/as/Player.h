@@ -27,6 +27,10 @@ public:
 
     // Advances one frame (enterFrame events, timelines, queued scripts, intervals).
     void tick();
+    // Runs queued actions now (after host code changed the stage between ticks, as the
+    // game's own scripts would have, so new clips' first-frame scripts run before the
+    // next tick advances them).
+    void flushActions() { runActions(); }
     // True while the mouse is over something clickable that shows Flash's hand cursor
     // (buttons and clips with button handlers, unless useHandCursor is false).
     bool wantsHandCursor();
@@ -48,6 +52,8 @@ public:
     std::vector<const flash::DisplayObject*> hiddenObjects;
     flash::DisplayObject* backdrop = nullptr;
     std::vector<flash::Matrix> backdropPlacements;
+    // Per placement, the stage rectangle (pixels) that copy is drawn within; none: all.
+    std::vector<flash::Rect> backdropClips;
     // Paint everything beyond this rectangle (stage twips) black, over the whole frame
     // (letterbox bars).
     std::optional<flash::Rect> blackBeyond;

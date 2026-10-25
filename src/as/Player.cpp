@@ -258,14 +258,24 @@ void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolat
     // The backdrop's copies: its parent's stage matrix, after each placement (translations
     // in stage pixels, so scaled to twips).
     std::vector<flash::Matrix> backdropMatrices;
+    std::vector<flash::IntRect> backdropAreas;  // device pixels
     std::vector<const flash::DisplayObject*> hidden = hiddenObjects;
     if (backdrop && backdrop->visible) {
         hidden.push_back(backdrop);
         flash::Matrix parent = backdrop->parent() ? backdrop->parent()->worldMatrix() : flash::Matrix{};
-        for (flash::Matrix p : backdropPlacements) {
+        for (size_t i = 0; i < backdropPlacements.size(); i++) {
+            flash::Matrix p = backdropPlacements[i];
             p.tx *= 20;
             p.ty *= 20;
             backdropMatrices.push_back(m * p * parent);
+            flash::IntRect area{0, 0, dst.width, dst.height};
+            if (i < backdropClips.size()) {
+                const flash::Rect& c = backdropClips[i];
+                area = {std::max(0, (int)std::lround(originX + c.xMin * scale)), std::max(0, (int)std::lround(originY + c.yMin * scale)),
+                        std::min(dst.width, (int)std::lround(originX + c.xMax * scale)),
+                        std::min(dst.height, (int)std::lround(originY + c.yMax * scale))};
+            }
+            backdropAreas.push_back(area);
         }
     }
     flash::renderSettings.hidden = hidden.empty() ? nullptr : &hidden;
@@ -286,8 +296,12 @@ void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolat
         const flash::IntRect& clip = clips[band];
         flash::Rasterizer& rast = worker == 0 ? r : rasterizers_[worker - 1];
         flash::setOcclusionCutoff(covers[band]);
-        for (const flash::Matrix& bm : backdropMatrices)
-            flash::renderDisplayObject(*backdrop, rast, dst, clip, bm, flash::ColorTransform{}, movie_, true);
+        for (size_t i = 0; i < backdropMatrices.size(); i++) {
+            const flash::IntRect& a = backdropAreas[i];
+            flash::IntRect c{std::max(clip.x0, a.x0), std::max(clip.y0, a.y0), std::min(clip.x1, a.x1), std::min(clip.y1, a.y1)};
+            if (!c.empty())
+                flash::renderDisplayObject(*backdrop, rast, dst, c, backdropMatrices[i], flash::ColorTransform{}, movie_, true);
+        }
         flash::renderDisplayObject(*root_, rast, dst, clip, m, flash::ColorTransform{}, movie_);
         if (blackBeyond) {
             const flash::Rect& s = *blackBeyond;

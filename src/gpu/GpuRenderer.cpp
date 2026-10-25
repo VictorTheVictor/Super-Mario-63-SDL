@@ -529,6 +529,9 @@ void GpuRenderer::render(as::Player& player, const Movie& movie, int width, int 
     }
     renderSettings.hidden = hidden.empty() ? nullptr : &hidden;
 
+    // The frame is drawn into a render target of our own and then copied to the bound
+    // framebuffer (the window's): blend modes copy what is behind them, and a window's
+    // framebuffer can't always be copied from (multisampled, or another pixel format).
     GLint bound = 0;
     gl::GetIntegerv(GL_FRAMEBUFFER_BINDING, &bound);
     Surface root;
@@ -539,15 +542,25 @@ void GpuRenderer::render(as::Player& player, const Movie& movie, int width, int 
     bind(root);
     gl::EnableVertexAttribArray(0);
     gl::ActiveTexture(GL_TEXTURE0);
-    setClip({0, 0, width, height});
-    gl::ColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    gl::StencilMask(0xFF);
+    Target* frame = acquire(width, height, true, false);
+    beginTarget(frame);
     gl::ClearColor(movie.background.r / 255.f, movie.background.g / 255.f, movie.background.b / 255.f, 1.f);
-    gl::ClearStencil(0);
-    gl::Clear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    gl::Clear(GL_COLOR_BUFFER_BIT);
     inMask_ = false;
 
-    for (const Matrix& bm : backdropMatrices) drawObject(*backdrop, bm, ColorTransform{}, true);
+    for (size_t i = 0; i < backdropMatrices.size(); i++) {
+        IntRect area{0, 0, width, height};
+        if (i < player.backdropClips.size()) {
+            const Rect& c = player.backdropClips[i];
+            area = {(int)std::lround(originX + c.xMin * scale), (int)std::lround(originY + c.yMin * scale),
+                    (int)std::lround(originX + c.xMax * scale), (int)std::lround(originY + c.yMax * scale)};
+        }
+        area = intersect(area, {0, 0, width, height});
+        if (area.empty()) continue;
+        setClip(area);
+        drawObject(*backdrop, backdropMatrices[i], ColorTransform{}, true);
+    }
+    setClip({0, 0, width, height});
     drawObject(player.root(), m, ColorTransform{});
 
     if (player.blackBeyond) {
@@ -567,6 +580,11 @@ void GpuRenderer::render(as::Player& player, const Movie& movie, int width, int 
     }
     renderSettings.hidden = nullptr;
     renderSettings.interpolation = 1;  // scripts see real positions
+    finishTarget(frame, root);
+    setClip({0, 0, width, height});
+    gl::Disable(GL_BLEND);  // the frame is opaque: it replaces what is there
+    composite(frame->texture, frame->texW, frame->texH, 0, 0, width, height, ColorTransform{}, BlendNormal, false);
+    release(frame);
     gl::Disable(GL_STENCIL_TEST);
     gl::Disable(GL_SCISSOR_TEST);
 
