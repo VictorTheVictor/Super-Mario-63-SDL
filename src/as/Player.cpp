@@ -289,8 +289,8 @@ void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolat
         for (const flash::Matrix& bm : backdropMatrices)
             flash::renderDisplayObject(*backdrop, rast, dst, clip, bm, flash::ColorTransform{}, movie_, true);
         flash::renderDisplayObject(*root_, rast, dst, clip, m, flash::ColorTransform{}, movie_);
-        if (blackBeyondStage) {
-            flash::Rect s = movie_.stageRect;
+        if (blackBeyond) {
+            const flash::Rect& s = *blackBeyond;
             int x0 = std::clamp((int)std::lround(originX + s.xMin / 20 * scale), 0, dst.width);
             int x1 = std::clamp((int)std::lround(originX + s.xMax / 20 * scale), x0, dst.width);
             int y0 = (int)std::lround(originY + s.yMin / 20 * scale), y1 = (int)std::lround(originY + s.yMax / 20 * scale);

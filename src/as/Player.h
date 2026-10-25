@@ -48,8 +48,9 @@ public:
     std::vector<const flash::DisplayObject*> hiddenObjects;
     flash::DisplayObject* backdrop = nullptr;
     std::vector<flash::Matrix> backdropPlacements;
-    // Paint everything beyond the stage edges black, over the whole frame (letterbox bars).
-    bool blackBeyondStage = false;
+    // Paint everything beyond this rectangle (stage twips) black, over the whole frame
+    // (letterbox bars).
+    std::optional<flash::Rect> blackBeyond;
     // The frame's background instead of the movie's (a menu's own background color, so it
     // also fills a window wider than the stage).
     std::optional<flash::Color> backgroundColor;

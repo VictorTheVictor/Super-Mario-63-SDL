@@ -35,7 +35,6 @@
 #include "as/Player.h"
 #include "flash/DisplayObject.h"
 #include "game/Scripts.h"
-#include "EdgeFill.h"
 #include "EmbeddedAssets.h"
 #include "MissingSwfImage.h"
 #include "flash/Effects.h"
@@ -566,7 +565,7 @@ int main(int argc, char** argv) {
     double renderScale = 1;  // headless output size, in multiples of the stage size
     int viewOption = 1, windowW = 0, windowH = 0;  // headless: --view N --window WxH
     int renderThreads = 0;   // 0: one per hardware thread
-    bool noLayerCache = false, noOcclusion = false, noEdgeFill = false;
+    bool noLayerCache = false, noOcclusion = false;
     bool noInterpolation = false;  // --no-smooth-motion: draw only at game ticks
     bool debugOverlay = false;     // --debug-overlay: start with the F3 view on
     double headlessInterpolation = 1;  // --interpolate T: screenshot between the last two ticks
@@ -585,7 +584,6 @@ int main(int argc, char** argv) {
         else if (a == "--deterministic") as::setDeterministic(63);
         else if (a == "--no-layer-cache") noLayerCache = true;
         else if (a == "--no-occlusion") noOcclusion = true;
-        else if (a == "--no-edge-fill") noEdgeFill = true;
         else if (a == "--no-smooth-motion") noInterpolation = true;
         else if (a == "--debug-overlay") debugOverlay = true;
         else if (a == "--interpolate" && i + 1 < argc) headlessInterpolation = std::atof(argv[++i]);
@@ -761,8 +759,6 @@ int main(int argc, char** argv) {
                                             "sky extended by a mirrored copy on the right, centered",
                                             "sky zoomed to fill", "sky stretched to fill", "sky as is, black beyond"};
     int viewMode = Letterbox;
-    // Ground beyond the level's ends when the window shows past the stage (see EdgeFill).
-    EdgeFill edgeFill;
     // Objects shown differently from where the game put them (displayTransform): HUD
     // pieces at the window's edges, the screen filter stretched over the whole window.
     std::vector<std::weak_ptr<flash::DisplayObject>> adjusted;
@@ -774,37 +770,56 @@ int main(int argc, char** argv) {
         for (auto& w : adjusted)
             if (auto d = w.lock()) d->displayTransform = {}, d->cacheAsLayer = false;
         adjusted.clear();
-        player->blackBeyondStage = false;
+        player->blackBeyond.reset();
         player->backgroundColor.reset();
         if (viewMode == Letterbox || viewScale <= 0) return;
         // The window in stage pixels.
         double wx0 = -viewX / viewScale, wy0 = -viewY / viewScale;
         double ww = surf.width / viewScale, wh = surf.height / viewScale;
-        // A level end that leads nowhere is never shown with empty space past it: the view
-        // pans (the level and its parallax backgrounds shift, the HUD stays) until that end
-        // is at the window's edge. Positions as drawn this frame, between ticks too.
-        {
-            double pan = 0;
-            int ends = 0;
-            flash::Matrix toStage;
-            flash::renderSettings.interpolation = interpolation;
-            if (auto end = edgeFill.deadEnd(false, toStage)) {
-                double x = toStage.apply(flash::Point{*end * 20, 0}).x / 20;
-                if (x > wx0) pan += wx0 - x, ends++;
-            }
-            if (auto end = edgeFill.deadEnd(true, toStage)) {
-                double x = toStage.apply(flash::Point{*end * 20, 0}).x / 20;
-                if (x < wx0 + ww) pan += wx0 + ww - x, ends++;
-            }
+        // The window never shows more of a level than the game's camera could: the game
+        // keeps its camera off the level's camera walls (the course part CamEdge, tested at
+        // the middle of each stage edge), and the window's view does the same. Where it
+        // would see past a wall, the level and its parallax backgrounds shift (the HUD
+        // stays) until the wall is at the window's edge; where the walls are closer together
+        // than the window, the area between them is centered and the rest is black, and the
+        // window's edges (for the HUD and the stretched overlays) are the walls.
+        if (auto* camEdge = as::resolvePath(&player->root(), "_root.Course.CamEdge"); camEdge && camEdge->parent()) {
+            flash::renderSettings.interpolation = interpolation;  // as drawn this frame
+            flash::Matrix toStage = camEdge->parent()->worldMatrix() * camEdge->drawMatrix();
             flash::renderSettings.interpolation = 1;
-            if (ends) pan /= ends;  // both ends in view: center the level
-            if (pan != 0)
+            auto blocked = [&](double x, double y) { return camEdge->hitTest(toStage, flash::Point{x * 20, y * 20}); };
+            // Per axis: the first wall within a window's width past each stage edge.
+            auto clampAxis = [&](bool vertical, double& w0, double wsize, double size) {
+                double lo = -1e9, hi = 1e9, mid = (vertical ? W : H) / 2.0;
+                auto at = [&](double t) { return vertical ? blocked(mid, t) : blocked(t, mid); };
+                for (int k = 0; k < wsize; k++)
+                    if (at(-k - 0.5)) { lo = -k; break; }
+                for (int k = 0; k < wsize; k++)
+                    if (at(size + k + 0.5)) { hi = size + k; break; }
+                double shift = 0;  // how far the view moves (stage pixels)
+                if (hi - lo < wsize) {
+                    shift = (lo + hi) / 2 - (w0 + wsize / 2);
+                    return std::tuple{shift, lo, hi, true};
+                }
+                if (w0 < lo) shift = lo - w0;
+                else if (w0 + wsize > hi) shift = hi - (w0 + wsize);
+                return std::tuple{shift, lo, hi, false};
+            };
+            auto [dx, left, right, narrowX] = clampAxis(false, wx0, ww, W);
+            auto [dy, top, bottom, narrowY] = clampAxis(true, wy0, wh, H);
+            if (dx != 0 || dy != 0)
                 for (auto [path, factor] : {std::pair{"_root.Course", 1.0}, {"_root.BGCloseCourse", 0.5},
                                             {"_root.MidBackground", 0.2}, {"_root.BGCourse", 0.1}})
                     if (auto* layer = as::resolvePath(&player->root(), path)) {
-                        layer->displayTransform = flash::Matrix::translate(pan * factor * 20, 0);
+                        layer->displayTransform = flash::Matrix::translate(-dx * factor * 20, -dy * factor * 20);
                         adjusted.push_back(layer->weak_from_this());
                     }
+            if (narrowX || narrowY) {
+                // The walls, where they now are on the stage.
+                if (narrowX) wx0 = left - dx, ww = right - left;
+                if (narrowY) wy0 = top - dy, wh = bottom - top;
+                player->blackBeyond = flash::Rect{wx0 * 20, wy0 * 20, (wx0 + ww) * 20, (wy0 + wh) * 20};
+            }
         }
         // Menus whose background is a stage-sized opaque shape on the main timeline (the
         // course select's white page): its color fills the rest of the window.
@@ -832,7 +847,7 @@ int main(int argc, char** argv) {
                 transition->displayTransform = parent.inverse() * toWindow * parent;
                 adjusted.push_back(transition->weak_from_this());
             } else if (as::resolvePath(&player->root(), "_root.Course")) {
-                player->blackBeyondStage = true;
+                player->blackBeyond = flash::Rect{0, 0, W * 20.0, H * 20.0};
             }
         }
         if (auto* stats = dynamic_cast<MovieClip*>(as::resolvePath(&player->root(), "_root.Stats")))
@@ -1044,7 +1059,6 @@ int main(int argc, char** argv) {
         player->tick();
         if (noclip) pinChar();
         updateOptionsRow();
-        if (!noEdgeFill) edgeFill.update(*player, viewMode != Letterbox);
     };
 
     // Pausing is the game's own pause menu ("Pause New", sprite 795, an unnamed clip in
