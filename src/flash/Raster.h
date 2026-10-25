@@ -50,11 +50,6 @@ struct RenderSettings {
     // objects at, for rendering more often than the game ticks. 1 outside rendering, so
     // scripts and hit tests always see the real state.
     double interpolation = 1;
-    // A filtered layer drawn in parallel strips first builds the filtered layers nested in
-    // it once each, instead of every strip rebuilding them for its rows plus the filters'
-    // reach (much faster for animated nested filters; a few pixels can differ by 1/255,
-    // since float blur sums then start at other rows).
-    bool shareNestedLayers = true;
     // Objects left out of the frame, as if invisible (window presentation options).
     const std::vector<const DisplayObject*>* hidden = nullptr;
 

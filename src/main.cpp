@@ -606,7 +606,6 @@ int main(int argc, char** argv) {
         else if (a == "--window" && i + 1 < argc) std::sscanf(argv[++i], "%dx%d", &windowW, &windowH);
         else if (a == "--render-scale" && i + 1 < argc) renderScale = std::max(0.25, std::atof(argv[++i]));
         else if (a == "--smooth") flash::renderSettings.crispBitmaps = false;
-        else if (a == "--no-shared-layers") flash::renderSettings.shareNestedLayers = false;
         else if (a == "--deterministic") as::setDeterministic(63);
         else if (a == "--no-layer-cache") noLayerCache = true;
         else if (a == "--letterbox") letterboxOption = true;
@@ -1782,14 +1781,6 @@ int main(int argc, char** argv) {
                         }
                         if (e.key.keysym.sym == SDLK_F4 && !e.key.repeat) {
                             renderSettings.crispBitmaps = !renderSettings.crispBitmaps;
-                            redraw = true;
-                            break;
-                        }
-                        // F8: nested filter layers built once per layer (fast) or per strip
-                        // (the earlier, slower way; can differ by 1/255 in a few pixels).
-                        if (e.key.keysym.sym == SDLK_F8 && !e.key.repeat) {
-                            renderSettings.shareNestedLayers = !renderSettings.shareNestedLayers;
-                            std::printf("shared nested filter layers %s\n", renderSettings.shareNestedLayers ? "on" : "off");
                             redraw = true;
                             break;
                         }

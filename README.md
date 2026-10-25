@@ -101,9 +101,7 @@ letterboxed (only the stage, black bars). Fades (to and from white
 or black) cover the window; the wipes in a level (the star, and the curtains into and
 out of course parts) are scaled evenly until they cover it, so their curves keep their
 shape. The game's pause menu's panels and the dark fade between its pages cover the
-window, and its counters move to the edges too. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off by default: frames are drawn as fast as possible), F8 toggles building
-nested filter layers once (on by default; off draws them per strip as before, slower, and can
-differ by 1/255 in a few pixels), F6 toggles
+window, and its counters move to the edges too. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off by default: frames are drawn as fast as possible), F6 toggles
 smooth motion. The game's fps counter shows the frames actually drawn per second.
 Links (the Runouw and Newgrounds banners) open in the default browser (not on Android),
 and the cursor turns into a hand over anything clickable.
@@ -173,7 +171,6 @@ Headless options for testing and profiling (with `--frames N`):
     --profile out.prof                      # sampling profiler (Linux); report with tools/profile.py
     --deterministic                         # fixed random seed and frame-driven clock
     --threads 1 --no-layer-cache --no-occlusion   # reference renderer for comparisons
-    --no-shared-layers                      # nested filter layers per strip (F8 off)
     --interpolate 0.5                       # screenshot halfway between the last two ticks
     --window 1920x1080                      # screenshot a window of that size
     --course C-1@F | --course C-1,lefttransition2,700,-250@F | --course StartInsideofCastle()@F
