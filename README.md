@@ -77,12 +77,9 @@ the SWF onto the executable passes it as the path too.
     ./build/debug/audio_test path/to/Super_Mario_63_2010.swf [sine.mp3] # decoders, mixer, Sound API
 
 Symbol viewer keys: Space play/pause, Left/Right step a frame, Escape quit.
-Game mode: input goes to the game; Shift+Escape quits. In a level, Escape (or a
-controller's Start button) pauses the game and its sound and opens a menu; Escape again
-resumes. In the castle it has the high score screen's three buttons: Save (saves and
-resumes), Save & Exit, and Don't Save (quits without saving). In a level it has the star
-prompt's two buttons: the blue one resumes, the red one leaves the level for the castle as
-if Mario had lost his last life (their artwork still reads Save / Don't Save). F11 toggles fullscreen. F5 cycles
+Game mode: input goes to the game; Shift+Escape quits. P opens the game's own pause menu
+(Star Map, Options, FLUDD, Exit to leave a level), and so do Escape and a controller's
+Start button; the sound playing when it opens is held until it closes. F11 toggles fullscreen. F5 cycles
 how the window is filled:
 
 1. letterboxed (only the stage, black bars);

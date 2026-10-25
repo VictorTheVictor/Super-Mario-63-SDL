@@ -164,15 +164,22 @@ bool Mixer::fill(Voice& v, size_t needFrames) {
     return have > base;
 }
 
+void Mixer::setPaused(bool paused) {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (paused == paused_) return;
+    paused_ = paused;
+    for (auto& [id, v] : voices_) v.held = paused;
+}
+
 void Mixer::mix(int16_t* out, size_t frames) {
-    if (paused_) {
-        std::fill(out, out + frames * 2, int16_t(0));
-        return;
-    }
     std::lock_guard<std::mutex> lock(mu_);
     scratch_.assign(frames * 2, 0.f);
     for (auto it = voices_.begin(); it != voices_.end();) {
         Voice& v = it->second;
+        if (v.held) {
+            ++it;
+            continue;
+        }
         Transform t = effective(v.params.group);
         bool alive = true;
         for (size_t i = 0; i < frames; i++) {

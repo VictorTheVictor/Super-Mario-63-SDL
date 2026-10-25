@@ -46,8 +46,9 @@ public:
     void stopTag(uint32_t tag, int group = -1);  // group -1 = any
     void stopGroup(int group);
     void stopAll();
-    // While paused, mix() outputs silence and every voice keeps its position.
-    void setPaused(bool paused) { paused_ = paused; }
+    // Pausing holds every voice playing at that moment (silent, keeping its position) until
+    // unpaused; voices started while paused (a pause menu's sounds) play normally.
+    void setPaused(bool paused);
     bool paused() const { return paused_; }
     bool isPlaying(VoiceId id) const;
     bool isTagPlaying(uint32_t tag) const;
@@ -75,6 +76,7 @@ private:
         uint64_t outFrames = 0;     // output frames produced (for envelopes)
         int loopsLeft = 1;
         bool ended = false;         // decoder exhausted, no loops left
+        bool held = false;          // paused: skipped by mix()
         uint32_t inSrc = 0, outSrc = 0;
     };
     bool fill(Voice& v, size_t needFrames);

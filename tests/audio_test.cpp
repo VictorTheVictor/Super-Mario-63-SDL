@@ -159,6 +159,25 @@ static void testDecodersAndMixer(const char* mp3Path) {
         CHECK(m.takeFinished().empty());  // explicit stops are not completions
     }
 
+    // Pausing holds the voices playing then; one started while paused (a pause menu's
+    // click) plays, and the held one resumes where it was afterwards.
+    {
+        audio::Mixer m(44100);
+        audio::Mixer::VoiceId music = m.play(audio::makeDecoder(pcmSource(pcm, 22050)), {});
+        std::vector<int16_t> buf(2048);
+        m.mix(buf.data(), 1024);
+        double before = m.positionMs(music);
+        m.setPaused(true);
+        m.mix(buf.data(), 1024);
+        CHECK(peak(buf, 0) == 0 && m.positionMs(music) == before);
+        m.play(audio::makeDecoder(pcmSource(pcm, 22050)), {});
+        m.mix(buf.data(), 1024);
+        CHECK(peak(buf, 0) > 12000 && m.positionMs(music) == before);
+        m.setPaused(false);
+        m.mix(buf.data(), 1024);
+        CHECK(m.positionMs(music) > before);
+    }
+
     // MP3 against a known 440 Hz sine.
     if (mp3Path) {
         std::ifstream f(mp3Path, std::ios::binary);

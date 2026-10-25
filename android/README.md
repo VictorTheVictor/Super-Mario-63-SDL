@@ -40,7 +40,7 @@ at `-O0`), and for four ABIs, so a full build takes a long time.
 ## On the device
 
 - Landscape, immersive full screen (system bars hidden). Touch acts as the mouse (menus); a USB or Bluetooth controller
-  plays (D-pad/stick, A jump, B FLUDD, X spin, Y ground pound/talk, Start pause menu).
+  plays (D-pad/stick, A jump, B FLUDD, X spin, Y ground pound/talk, Start the game's pause menu).
   Android offers to open the app when a USB controller is plugged in.
 - Saves go to the app's private storage. The back button quits. The Runouw/Newgrounds
   links do nothing (a tap would leave the game).
