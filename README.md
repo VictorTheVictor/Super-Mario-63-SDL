@@ -84,26 +84,17 @@ Start button; the sound playing when it opens, and anything the game starts mean
 the build embeds one: put `SM64_Pause.oga.mp3` (an MP3) at the repository root (ignored by
 git) before building. The options screen
 has two placeholder buttons beside Quality (Controls and Advanced, unlabeled for now; they
-do nothing yet). F11 toggles fullscreen. F5 cycles
-how the window is filled:
+do nothing yet). F11 toggles fullscreen.
 
-1. letterboxed (only the stage, black bars);
-2. sky repeated in every direction;
-3. sky repeated, with the copies above and below flipped vertically;
-4. sky extended by a mirrored copy on its left, the pair centered;
-5. sky extended by a mirrored copy on its right, the pair centered;
-6. sky zoomed to fill the window (cropped);
-7. sky stretched to fill the window;
-8. sky as is, black beyond it;
-
-then back to 1. Modes 2–8 fill the window and show what lies beyond the stage edges; they
-hide the HUD's 25% black frame around the stage and the black rectangle behind it, move
-the HUD's counters, hint line and quality box to the window's edges, stretch the screen's
-dark overlay (the castle before enough stars) over the whole window, show door and
-course transitions letterboxed, fill menus with their own background color (the course
-select's white page), and never show more of a level than the game's camera could: the
-view stops at the level's camera walls (its CamEdge clip) like the game's camera does,
-and where the walls are closer together than the window, the rest is black. Fades (to and from white
+In a level the game fills the window and shows what lies beyond the stage edges: the
+HUD's 25% black frame around the stage and the black rectangle behind it are hidden, the
+sky is extended by a mirrored copy on its left (the pair centered), the HUD's counters,
+hint line and quality box move to the window's edges, and the screen's dark overlay (the
+castle before enough stars) stretches over the whole window. The view never shows more of
+a level than the game's camera could: it stops at the level's camera walls (its CamEdge
+clip) like the game's camera does, and where the walls are closer together than the
+window, the rest is black. The title, menus and the course and star select are
+letterboxed (only the stage, black bars). Fades (to and from white
 or black) cover the window; the wipes in a level stay letterboxed. The game's
 pause menu's white panel covers the window and its counters move to the edges too. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off: draw as fast as possible, to measure rendering), F8 toggles building
 nested filter layers once (on by default; off draws them per strip as before, slower, and can
@@ -145,7 +136,7 @@ vsync. `--no-smooth-motion` (or F6) draws only at game ticks.
 
 ### Resolution and rendering
 
-The game renders at the window's real pixel size (letterboxed to the stage's 3:2), so a
+The game renders at the window's real pixel size, so a
 maximized or fullscreen window shows sharper vector art instead of an upscaled 450×300
 image. Bitmaps drawn larger than their native size use nearest-neighbor sampling (crisp
 pixels) unless `--smooth` is given or F4 is pressed.
@@ -164,7 +155,7 @@ Headless options for testing and profiling (with `--frames N`):
     --threads 1 --no-layer-cache --no-occlusion   # reference renderer for comparisons
     --no-shared-layers                      # nested filter layers per strip (F8 off)
     --interpolate 0.5                       # screenshot halfway between the last two ticks
-    --view 3 --window 1920x1080             # screenshot a window of that size in F5 mode 3
+    --window 1920x1080                      # screenshot a window of that size
     --course C-1@F | --course C-1,lefttransition2,700,-250@F | --course StartInsideofCastle()@F
     --course gotoCourseSelect(1)@F          # a starter function with a number argument
                                             # switch course at frame F (as the game does)
