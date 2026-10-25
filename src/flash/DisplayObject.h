@@ -75,6 +75,11 @@ public:
     // `matrix` as of the previous game tick (see renderSettings.interpolation).
     Matrix prevMatrix;
     bool hasPrevMatrix = false;
+    // Painter's-order numbers from the last occlusion pass (findBandCovers): the object
+    // and its subtree draw as numbers [orderBegin, orderEnd]. Valid while orderStamp is
+    // that pass's stamp.
+    uint32_t orderStamp = 0;
+    int orderBegin = 0, orderEnd = 0;
     // Port presentation: applied (in parent space, twips) on top of where the game put the
     // object when drawing it and picking it with the mouse, without scripts seeing the
     // difference (e.g. HUD pinned to the window edge).
@@ -293,6 +298,17 @@ private:
 // filters and blend mode (offscreen layers when needed). Only pixels inside `clip` are
 // written, so threads can render disjoint clips of one surface at the same time, after
 // prepareForRender(). `ignoreVisible` draws hidden objects too (masks still mask).
+// Occlusion culling. Numbers the tree in painter's order and finds, for each band, the
+// topmost object drawn straight onto the frame (no filter, blend layer or mask, alpha
+// untouched) with a fill that is an opaque axis-aligned rectangle covering the whole band
+// with a pixel to spare: every pixel of the band then ends up fully covered by an opaque
+// color, whatever was drawn before. covers[i] is that object's number, 0 if none.
+void findBandCovers(DisplayObject& root, const Matrix& rootMatrix, const std::vector<IntRect>& bands,
+                    std::vector<int>& covers, const Movie& movie);
+// For the calling thread: skip objects drawn entirely before this number (the band's
+// cover from findBandCovers paints over all of it). 0 draws everything.
+void setOcclusionCutoff(int order);
+
 void renderDisplayObject(DisplayObject& obj, Rasterizer& r, Surface& dst, const IntRect& clip,
                          const Matrix& parentMatrix, const ColorTransform& parentCx,
                          const Movie& movie, bool ignoreVisible = false);

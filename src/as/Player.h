@@ -53,6 +53,8 @@ public:
     void setRenderThreads(int n);
     // Keeping filtered layers between frames (on by default; off for comparisons).
     void setLayerCaching(bool on) { layerCaching_ = on; }
+    // Skipping what is drawn under each band's opaque cover (on by default; off for comparisons).
+    void setOcclusionCulling(bool on) { occlusion_ = on; }
     flash::MovieClip& root() { return *root_; }
 
     // Input, in Flash key codes and stage pixels.
@@ -138,6 +140,7 @@ private:
     std::vector<flash::Rasterizer> rasterizers_;  // one per render thread but the caller
     flash::LayerCache layerCache_;
     bool layerCaching_ = true;
+    bool occlusion_ = true;
     void syncBinding(Binding& b);
     std::weak_ptr<flash::DisplayObject> hover_, pressed_;
     std::set<std::pair<uint16_t, uint32_t>> missing_;

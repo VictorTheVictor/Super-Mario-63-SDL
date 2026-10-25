@@ -595,7 +595,7 @@ int main(int argc, char** argv) {
     double renderScale = 1;  // headless output size, in multiples of the stage size
     int viewOption = 1, windowW = 0, windowH = 0;  // headless: --view N --window WxH
     int renderThreads = 0;   // 0: one per hardware thread
-    bool noLayerCache = false;
+    bool noLayerCache = false, noOcclusion = false;
     bool noInterpolation = false;  // --no-smooth-motion: draw only at game ticks
     bool debugOverlay = false;     // --debug-overlay: start with the F3 view on
     std::string pauseAt;           // --pause-at F1,F2: press Esc (pause menu) at these frames
@@ -613,6 +613,7 @@ int main(int argc, char** argv) {
         else if (a == "--smooth") flash::renderSettings.crispBitmaps = false;
         else if (a == "--deterministic") as::setDeterministic(63);
         else if (a == "--no-layer-cache") noLayerCache = true;
+        else if (a == "--no-occlusion") noOcclusion = true;
         else if (a == "--no-smooth-motion") noInterpolation = true;
         else if (a == "--debug-overlay") debugOverlay = true;
         else if (a == "--pause-at" && i + 1 < argc) pauseAt = argv[++i];
@@ -758,6 +759,7 @@ int main(int argc, char** argv) {
         player = std::make_unique<as::Player>(movie);
         if (renderThreads) player->setRenderThreads(renderThreads);
         if (noLayerCache) player->setLayerCaching(false);
+        if (noOcclusion) player->setOcclusionCulling(false);
         player->debugOverlay = debugOverlay;
         player->setAudio(audioBridge.get());
         viewed = &player->root();

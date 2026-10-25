@@ -88,6 +88,8 @@ struct Bitmap : Character {
     int width = 0, height = 0;
     std::vector<uint32_t> pixels;  // premultiplied, 0xAARRGGBB
     bool placeholder = false;      // undecoded format (JPEG for now)
+    // Every texel fully opaque: -1 not yet known (see findBandCovers).
+    mutable int8_t opaque = -1;
 };
 
 // Sound sample format shared by DefineSound and stream heads.

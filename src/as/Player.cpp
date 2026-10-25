@@ -275,9 +275,17 @@ void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolat
         flash::prerenderLayers(*root_, m, dst, movie_, layerCache_, r, [&](int n, const auto& fn) {
             renderPool_->run(n, [&](int i, int worker) { fn(i, worker == 0 ? r : rasterizers_[worker - 1]); });
         });
+    // Per band, the topmost opaque full-band cover: what is drawn before it can't show.
+    std::vector<flash::IntRect> clips(bands);
+    for (int band = 0; band < bands; band++)
+        clips[band] = {0, dst.height * band / bands, dst.width, dst.height * (band + 1) / bands};
+    std::vector<int> covers;
+    if (occlusion_) flash::findBandCovers(*root_, m, clips, covers, movie_);
+    else covers.assign(bands, 0);
     renderPool_->run(bands, [&](int band, int worker) {
-        flash::IntRect clip{0, dst.height * band / bands, dst.width, dst.height * (band + 1) / bands};
+        const flash::IntRect& clip = clips[band];
         flash::Rasterizer& rast = worker == 0 ? r : rasterizers_[worker - 1];
+        flash::setOcclusionCutoff(covers[band]);
         for (const flash::Matrix& bm : backdropMatrices)
             flash::renderDisplayObject(*backdrop, rast, dst, clip, bm, flash::ColorTransform{}, movie_, true);
         flash::renderDisplayObject(*root_, rast, dst, clip, m, flash::ColorTransform{}, movie_);
@@ -292,6 +300,7 @@ void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolat
                 else std::fill(row, row + x0, 0xFF000000u), std::fill(row + x1, row + dst.width, 0xFF000000u);
             }
         }
+        flash::setOcclusionCutoff(0);  // this worker also renders layers, which see everything
     });
     if (debugOverlay) flash::drawDebugOverlay(*root_, dst, m);
     flash::renderSettings.layerCache = nullptr;

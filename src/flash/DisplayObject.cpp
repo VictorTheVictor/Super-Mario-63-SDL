@@ -190,9 +190,111 @@ bool usesCachedLayer(const DisplayObject& o) {
 
 }  // namespace
 
+namespace {
+
+uint32_t orderStamp = 0;
+thread_local int occlusionCutoff = 0;
+
+// Drawn entirely before the calling band's cover, so nothing of it can show.
+bool occluded(const DisplayObject& o) {
+    return occlusionCutoff && o.orderStamp == orderStamp && o.orderEnd < occlusionCutoff;
+}
+
+bool opaqueFill(const FillStyle& f, const Movie& movie) {
+    if (f.type == FillStyle::Solid) return f.color.a == 255;
+    if (f.isGradient()) {
+        if (f.stops.empty()) return false;
+        for (const auto& s : f.stops)
+            if (s.color.a != 255) return false;
+        return true;
+    }
+    auto* c = movie.character(f.bitmapId);
+    if (!c || c->kind != Character::Bitmap) return false;
+    auto* b = static_cast<const Bitmap*>(c);
+    if (b->opaque < 0) {
+        b->opaque = b->width > 0 && b->height > 0 && !b->placeholder;
+        for (uint32_t p : b->pixels)
+            if ((p >> 24) != 255) {
+                b->opaque = 0;
+                break;
+            }
+    }
+    return b->opaque == 1;
+}
+
+// The device rectangle a fill path covers, if it is an axis-aligned rectangle under `m`
+// (no rotation or skew): straight horizontal and vertical edges whose every vertex lies on
+// the bounding box, enclosing exactly the box's area.
+bool rectangleFill(const FillPath& fp, const Matrix& m, Rect& out) {
+    if (m.b != 0 || m.c != 0 || fp.edges.size() < 4) return false;
+    double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300, area = 0;
+    for (const Edge& e : fp.edges) {
+        if (e.curved || (e.from.x != e.to.x && e.from.y != e.to.y)) return false;
+        x0 = std::min({x0, e.from.x, e.to.x});
+        x1 = std::max({x1, e.from.x, e.to.x});
+        y0 = std::min({y0, e.from.y, e.to.y});
+        y1 = std::max({y1, e.from.y, e.to.y});
+        area += e.from.x * e.to.y - e.to.x * e.from.y;
+    }
+    for (const Edge& e : fp.edges)
+        for (const Point& p : {e.from, e.to})
+            if (p.x != x0 && p.x != x1 && p.y != y0 && p.y != y1) return false;
+    double box = (x1 - x0) * (y1 - y0);
+    if (box <= 0 || std::fabs(std::fabs(area / 2) - box) > box * 1e-9) return false;
+    out = m.apply(Rect{x0, y0, x1, y1});
+    return true;
+}
+
+void numberForOcclusion(DisplayObject& o, const Matrix& parentMatrix, const ColorTransform& parentCx,
+                        bool direct, int& counter, const std::vector<IntRect>& bands, std::vector<int>& covers,
+                        const Movie& movie) {
+    o.orderStamp = orderStamp;
+    o.orderBegin = ++counter;
+    bool drawn = o.visible && !renderSettings.isHidden(&o);
+    direct = direct && drawn && o.filters.empty() && o.blendMode < BlendLayer;
+    Matrix m = parentMatrix * o.drawMatrix();
+    ColorTransform cx = parentCx * o.cxform;
+    if (direct && cx.aMul == 1 && cx.aAdd == 0 && dynamic_cast<ShapeObject*>(&o)) {
+        const ShapeDef& def = static_cast<ShapeCharacter*>(o.definition())->def;
+        for (const auto& layer : def.layers)
+            for (const FillPath& fp : layer.fills) {
+                Rect r;
+                if (fp.style < 0 || fp.style >= (int)def.fills.size() || !opaqueFill(def.fills[fp.style], movie) ||
+                    !rectangleFill(fp, m, r))
+                    continue;
+                for (size_t i = 0; i < bands.size(); i++) {
+                    const IntRect& b = bands[i];
+                    if (r.xMin <= b.x0 - 1 && r.xMax >= b.x1 + 1 && r.yMin <= b.y0 - 1 && r.yMax >= b.y1 + 1)
+                        covers[i] = o.orderBegin;
+                }
+            }
+    }
+    // Masks and what they mask draw through mask layers, not straight onto the frame.
+    int maskedUntil = -1;
+    o.forEachChild([&](DisplayObject& c) {
+        bool masked = c.clipDepth || c.depth <= maskedUntil;
+        if (c.clipDepth) maskedUntil = c.clipDepth;
+        numberForOcclusion(c, m, cx, direct && !masked, counter, bands, covers, movie);
+    });
+    o.orderEnd = counter;
+}
+
+}  // namespace
+
+void findBandCovers(DisplayObject& root, const Matrix& rootMatrix, const std::vector<IntRect>& bands,
+                    std::vector<int>& covers, const Movie& movie) {
+    orderStamp++;
+    covers.assign(bands.size(), 0);
+    int counter = 0;
+    numberForOcclusion(root, rootMatrix, ColorTransform{}, true, counter, bands, covers, movie);
+}
+
+void setOcclusionCutoff(int order) { occlusionCutoff = order; }
+
 void renderDisplayObject(DisplayObject& o, Rasterizer& r, Surface& dst, const IntRect& clip,
                          const Matrix& parentMatrix, const ColorTransform& parentCx,
                          const Movie& movie, bool ignoreVisible) {
+    if (occluded(o)) return;
     if ((!o.visible || renderSettings.isHidden(&o)) && !ignoreVisible) return;
     Matrix m = parentMatrix * o.drawMatrix();
     ColorTransform cx = parentCx * o.cxform;
@@ -902,6 +1004,7 @@ void MovieClip::render(Rasterizer& r, Surface& dst, const IntRect& clip, const M
         while (last != children_.end() && last->first <= c.clipDepth) ++last;
         auto first = std::next(it);
         it = std::prev(last);
+        if (occluded(*it->second)) continue;  // the whole group is under the band's cover
         Rect b = (m * c.drawMatrix()).apply(c.localBounds());
         if (b.empty() || !std::isfinite(b.xMin) || !std::isfinite(b.yMin) || !std::isfinite(b.xMax) ||
             !std::isfinite(b.yMax))

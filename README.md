@@ -149,7 +149,7 @@ Headless options for testing and profiling (with `--frames N`):
     --bench / --bench-from F                # per-frame script and render timings
     --profile out.prof                      # sampling profiler (Linux); report with tools/profile.py
     --deterministic                         # fixed random seed and frame-driven clock
-    --threads 1 --no-layer-cache            # reference renderer for comparisons
+    --threads 1 --no-layer-cache --no-occlusion   # reference renderer for comparisons
     --interpolate 0.5                       # screenshot halfway between the last two ticks
     --view 3 --window 1920x1080             # screenshot a window of that size in F5 mode 3
     --course C-1@F | --course C-1,lefttransition2,700,-250@F | --course StartInsideofCastle()@F
