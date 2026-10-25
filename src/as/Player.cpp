@@ -353,7 +353,10 @@ void Player::syncBinding(Binding& b) {
         }
     }
     std::string text = v.isUndefined() ? "" : v.toString();
-    if (text != b.last) {
+    // A new field shows its variable's value even when that is "" (its own initial text
+    // would otherwise stay: the HUD's hint showing a stale hint).
+    if (text != b.last || !b.synced) {
+        b.synced = true;
         b.last = text;
         if (tf->html()) tf->setHtmlText(text);
         else tf->setText(text);

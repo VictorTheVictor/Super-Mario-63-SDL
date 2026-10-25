@@ -136,6 +136,7 @@ private:
         std::weak_ptr<flash::TextField> field;
         std::string last;
         bool initialized = false;
+        bool synced = false;  // the field shows the variable's value
     };
     std::vector<Binding> bindings_;
     std::unique_ptr<flash::WorkerPool> renderPool_;
