@@ -35,6 +35,7 @@
 #include "as/Player.h"
 #include "flash/DisplayObject.h"
 #include "game/Scripts.h"
+#include "EdgeFill.h"
 #include "EmbeddedFonts.h"
 #include "MissingSwfImage.h"
 #include "flash/Effects.h"
@@ -564,7 +565,7 @@ int main(int argc, char** argv) {
     double renderScale = 1;  // headless output size, in multiples of the stage size
     int viewOption = 1, windowW = 0, windowH = 0;  // headless: --view N --window WxH
     int renderThreads = 0;   // 0: one per hardware thread
-    bool noLayerCache = false, noOcclusion = false;
+    bool noLayerCache = false, noOcclusion = false, noEdgeFill = false;
     bool noInterpolation = false;  // --no-smooth-motion: draw only at game ticks
     bool debugOverlay = false;     // --debug-overlay: start with the F3 view on
     double headlessInterpolation = 1;  // --interpolate T: screenshot between the last two ticks
@@ -583,6 +584,7 @@ int main(int argc, char** argv) {
         else if (a == "--deterministic") as::setDeterministic(63);
         else if (a == "--no-layer-cache") noLayerCache = true;
         else if (a == "--no-occlusion") noOcclusion = true;
+        else if (a == "--no-edge-fill") noEdgeFill = true;
         else if (a == "--no-smooth-motion") noInterpolation = true;
         else if (a == "--debug-overlay") debugOverlay = true;
         else if (a == "--interpolate" && i + 1 < argc) headlessInterpolation = std::atof(argv[++i]);
@@ -923,6 +925,8 @@ int main(int argc, char** argv) {
         }
     };
 
+    // Ground beyond the level's ends when the window shows past the stage (see EdgeFill).
+    EdgeFill edgeFill;
     auto tick = [&]() {
         if (!player) {
             symbolStage->advance();
@@ -938,6 +942,7 @@ int main(int argc, char** argv) {
         player->tick();
         if (noclip) pinChar();
         updateOptionsRow();
+        if (!noEdgeFill) edgeFill.update(*player, movie, viewMode != Letterbox);
     };
 
     // Pausing is the game's own pause menu ("Pause New", sprite 795, an unnamed clip in

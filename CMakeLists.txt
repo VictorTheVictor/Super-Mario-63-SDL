@@ -135,12 +135,12 @@ target_link_libraries(embedded_fonts PRIVATE flash)
 
 if(ANDROID)
     # SDL's Java activity loads libSDL2.so, then libmain.so, and calls its SDL_main.
-    add_library(main SHARED src/main.cpp)
+    add_library(main SHARED src/main.cpp src/EdgeFill.cpp src/EdgeLinks.cpp)
     target_link_libraries(main PRIVATE game embedded_fonts ${SM63_SDL_LIBS})
     return()  # the desktop tools and tests below are not built for Android
 endif()
 
-add_executable(sm63 src/main.cpp)
+add_executable(sm63 src/main.cpp src/EdgeFill.cpp src/EdgeLinks.cpp)
 target_link_libraries(sm63 PRIVATE game embedded_fonts ${SM63_SDL_LIBS})
 if(SM63_SDL_SOURCE AND NOT WIN32)
     # Portable Linux release: SDL2 is linked in, and so is the C++ runtime (testers'

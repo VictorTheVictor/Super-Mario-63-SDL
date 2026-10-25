@@ -96,8 +96,11 @@ how the window is filled:
 then back to 1. Modes 2–8 fill the window and show what lies beyond the stage edges; they
 hide the HUD's 25% black frame around the stage and the black rectangle behind it, move
 the HUD's counters, hint line and quality box to the window's edges, stretch the screen's
-dark overlay (the castle before enough stars) over the whole window, and show door and
-course transitions letterboxed. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off: draw as fast as possible, to measure rendering), F8 toggles building
+dark overlay (the castle before enough stars) over the whole window, show door and
+course transitions letterboxed, and continue the ground past a level's left and right
+ends: where a side exit leads into another course part, that part's terrain is drawn
+there lined up with this one; elsewhere the terrain is mirrored about the end (shapes
+only, not trees or other objects; see src/EdgeFill.h and tools/edge_links.py). F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off: draw as fast as possible, to measure rendering), F8 toggles building
 nested filter layers once (on by default; off draws them per strip as before, slower, and can
 differ by 1/255 in a few pixels), F6 toggles
 smooth motion. The game's fps counter shows the frames actually drawn per second.
@@ -154,6 +157,7 @@ Headless options for testing and profiling (with `--frames N`):
     --deterministic                         # fixed random seed and frame-driven clock
     --threads 1 --no-layer-cache --no-occlusion   # reference renderer for comparisons
     --no-shared-layers                      # nested filter layers per strip (F8 off)
+    --no-edge-fill                          # nothing drawn past the level ends
     --interpolate 0.5                       # screenshot halfway between the last two ticks
     --view 3 --window 1920x1080             # screenshot a window of that size in F5 mode 3
     --course C-1@F | --course C-1,lefttransition2,700,-250@F | --course StartInsideofCastle()@F
