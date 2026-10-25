@@ -908,6 +908,10 @@ void MovieClip::gotoFrame(int frame, bool andPlay) {
                 o.matrix = s.matrix;
                 o.cxform = s.cxform;
                 o.invalidateTransform();
+                // A jump back (a loop, a goto) is a cut: drawn between ticks, the object
+                // must not slide from where it was (a looping animation's last frame back
+                // to its first, which Flash shows as one seamless step).
+                o.hasPrevMatrix = false;
             }
             o.ratio = s.ratio;
             o.clipDepth = s.clipDepth;

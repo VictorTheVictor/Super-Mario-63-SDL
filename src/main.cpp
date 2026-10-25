@@ -1377,6 +1377,7 @@ int main(int argc, char** argv) {
                 player->flushActions();
             }
             // --set "_root.Course.Char._x=600@2000;...": assign numbers at given frames
+            // ('...' quotes a string: "_root.ToadMessage='Hello'@800")
             for (size_t ss = 0; player && ss < setSpec.size();) {
                 size_t semi = setSpec.find(';', ss);
                 std::string item = setSpec.substr(ss, semi == std::string::npos ? std::string::npos : semi - ss);
@@ -1386,8 +1387,11 @@ int main(int argc, char** argv) {
                 std::string path = item.substr(0, eq);
                 size_t dot = path.rfind('.');
                 flash::DisplayObject* base = as::resolvePath(&player->root(), path.substr(0, dot));
-                if (base) as::setMember(as::valueOf(base), as::intern(path.substr(dot + 1)),
-                                        std::atof(item.c_str() + eq + 1));
+                std::string value = item.substr(eq + 1, at - eq - 1);
+                as::Value v = value.size() >= 2 && value.front() == '\'' && value.back() == '\''
+                                  ? as::Value(value.substr(1, value.size() - 2))
+                                  : as::Value(std::atof(value.c_str()));
+                if (base) as::setMember(as::valueOf(base), as::intern(path.substr(dot + 1)), v);
             }
             // --goto LABEL@FRAME: _root.gotoAndStop(LABEL) at that frame
             if (player && !gotoSpec.empty() && i == std::atoi(gotoSpec.c_str() + gotoSpec.rfind('@') + 1))

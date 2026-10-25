@@ -139,11 +139,15 @@ public:
         double letterSpacing = 0;
     };
 
-    // The laid-out glyphs: shapes in glyph units, placed at (x, y) local twips, scaled.
+    // The laid-out glyphs: shapes in glyph units, placed at (x, y) local twips, scaled,
+    // and slanted by `skew` (synthesized italic: text asking for an italic the field's
+    // fonts don't have, like the message box's <b><i>Bowser:</i>).
     struct PlacedGlyph {
         const ShapeDef* shape;
         double x, y, scale;
         Color color;
+        double skew = 0;
+        Matrix matrix() const { return {scale, 0, skew, scale, x, y}; }
     };
     const std::vector<PlacedGlyph>& placedGlyphs() {
         if (dirty_) layout();

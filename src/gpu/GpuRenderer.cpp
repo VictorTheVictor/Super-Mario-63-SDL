@@ -1263,7 +1263,7 @@ void GpuRenderer::drawTextField(DisplayObject& o, const Matrix& m, const ColorTr
         }
     }
     for (const auto& g : tf.placedGlyphs()) {
-        drawGlyph(*g.shape, m * Matrix{g.scale, 0, 0, g.scale, g.x, g.y}, g.color, cx);
+        drawGlyph(*g.shape, m * g.matrix(), g.color, cx);
     }
     setClip(saved);
 }

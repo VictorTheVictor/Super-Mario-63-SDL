@@ -400,6 +400,7 @@ void TextField::setHtmlText(const std::string& src) {
             }
             if (cur.runs.empty() || cur.runs.back().format.font != stack.back().font ||
                 cur.runs.back().format.size != stack.back().size ||
+                cur.runs.back().format.bold != stack.back().bold || cur.runs.back().format.italic != stack.back().italic ||
                 std::memcmp(&cur.runs.back().format.color, &stack.back().color, sizeof(Color)))
                 cur.runs.push_back({U"", stack.back()});
             cur.runs.back().text.push_back(c);
@@ -609,11 +610,15 @@ void TextField::layout() {
                 lines_.push_back({utf8Encode(lt), x, width});
             }
             double baseline = y + asc;
-            for (size_t k = a; k < b; k++) {
+            // As in Flash, a line that doesn't fit within the field (below its bottom) isn't
+            // drawn, rather than showing cut off; the first line always is.
+            bool fits = glyphs_.empty() || y + asc + desc <= bounds.yMax - gutter + 20;
+            for (size_t k = a; k < b && fits; k++) {
                 const Item& it = items[k];
                 if (it.glyph >= 0 && edit_->password == false) {
                     double s = it.f->size / it.f->font->emSize;
-                    glyphs_.push_back({&it.f->font->glyphs[it.glyph], x, baseline, s, it.f->color});
+                    double skew = it.f->italic && !it.f->font->italic ? -0.21 * s : 0;
+                    glyphs_.push_back({&it.f->font->glyphs[it.glyph], x, baseline, s, it.f->color, skew});
                 }
                 x += it.adv;
             }
@@ -632,7 +637,8 @@ Rect TextField::textExtent() {
             for (const FillPath& fp : layer.fills)
                 for (const Edge& e : fp.edges)
                     for (Point q : {e.from, e.to, e.ctrl}) {
-                        double x = g.x + q.x * g.scale, y = g.y + q.y * g.scale;
+                        Point w = g.matrix().apply(q);
+                        double x = w.x, y = w.y;
                         if (!any) out = {x, y, x, y}, any = true;
                         out.xMin = std::min(out.xMin, x);
                         out.yMin = std::min(out.yMin, y);
@@ -677,7 +683,7 @@ void TextField::render(Rasterizer& r, Surface& dst, const IntRect& clip, const M
         }
     }
     for (const PlacedGlyph& g : glyphs_)
-        drawGlyph(r, dst, c, *g.shape, m * Matrix{g.scale, 0, 0, g.scale, g.x, g.y}, g.color, cx);
+        drawGlyph(r, dst, c, *g.shape, m * g.matrix(), g.color, cx);
 }
 
 }  // namespace flash
