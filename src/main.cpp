@@ -165,6 +165,7 @@ int keyByName(const std::string& n) {
     auto it = names.find(n);
     if (it != names.end()) return it->second;
     if (n.size() == 1 && std::isalnum((unsigned char)n[0])) return std::toupper((unsigned char)n[0]);
+    if (!n.empty() && n.find_first_not_of("0123456789") == std::string::npos) return std::atoi(n.c_str());  // a key code
     return 0;
 }
 
@@ -1408,6 +1409,10 @@ int main(int argc, char** argv) {
             if (button(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) || button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))
                 held.insert('Z');
             if (button(SDL_CONTROLLER_BUTTON_START)) held.insert('P');  // the game's pause menu
+            // Right stick up/down zooms the camera in/out (the game's + and - keys).
+            double ry = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0;
+            if (ry < -0.5) held.insert(187);
+            if (ry > 0.5) held.insert(189);
         }
         if (!noclip) {  // in noclip the directions fly Mario instead
             if (padLeft) held.insert(as::keycode::Left);

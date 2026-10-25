@@ -127,7 +127,8 @@ the executable (cmake/embed_assets.cmake, which also embeds the pause sound). Fr
 
 Game controllers (SDL GameController, e.g. Xbox layout): D-pad or left stick moves, A jumps,
 B uses FLUDD, X spins, Y ground pounds and talks (Z), the bumpers also press Z. They press
-the same keys the game reads from the keyboard (S, C, X, Z and the arrows).
+the same keys the game reads from the keyboard (S, C, X, Z and the arrows). The right stick
+zooms the camera: up zooms in, down zooms out (the game's + and - keys).
 Debugging: F2 toggles noclip (arrow keys fly Mario through walls, Shift for speed, easing to a stop; he is invulnerable meanwhile), F3
 shows every object's outline over the frame (shape edges in cyan; boxes for clips in
 green, text in yellow, buttons in magenta, masks in orange; invisible objects such as the
