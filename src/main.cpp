@@ -1459,13 +1459,22 @@ int main(int argc, char** argv) {
             };
             draw();
             if (timeRender > 0) {
-                gl::Finish();
-                Uint64 t0 = SDL_GetPerformanceCounter();
-                for (int k = 0; k < timeRender; k++) draw();
-                gl::Finish();
-                double ms = (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency() / timeRender;
-                std::printf("GPU render: %.2f ms per frame (%d software-drawn, %d redrawn)\n", ms, headlessGpu.fallbacks,
-                            headlessGpu.fallbacksRedrawn);
+                // The game keeps running between the timed draws, so animations cost what
+                // they do in play.
+                double total = 0;
+                int redrawn = 0;
+                for (int k = 0; k < timeRender; k++) {
+                    tick();
+                    if (windowView) applyView();
+                    gl::Finish();
+                    Uint64 t0 = SDL_GetPerformanceCounter();
+                    draw();
+                    gl::Finish();
+                    total += (SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency();
+                    redrawn += headlessGpu.layersRedrawn;
+                }
+                std::printf("GPU render: %.2f ms per frame (%d layers, %.1f redrawn per frame; %d text fields)\n",
+                            total / timeRender, headlessGpu.layers, (double)redrawn / timeRender, headlessGpu.software);
             }
             if (ms) {
                 gl::BindFramebuffer(GL_FRAMEBUFFER, fbo[1]);
@@ -1485,14 +1494,20 @@ int main(int argc, char** argv) {
                     // The framebuffer holds R, G, B, A bytes: back to ARGB words.
                     surf.pixels[(size_t)y * surf.width + x] = 0xFF000000u | (uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2];
                 }
-            std::printf("GPU: %d software-drawn objects (%d redrawn)\n", headlessGpu.fallbacks, headlessGpu.fallbacksRedrawn);
+            std::printf("GPU: %d layers (%d redrawn), %d text fields\n", headlessGpu.layers, headlessGpu.layersRedrawn,
+                        headlessGpu.software);
         } else {
             renderFrame();
             if (timeRender > 0) {
-                auto t0 = std::chrono::steady_clock::now();
-                for (int k = 0; k < timeRender; k++) renderFrame();
-                double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / timeRender;
-                std::printf("software render: %.2f ms per frame\n", ms);
+                double total = 0;
+                for (int k = 0; k < timeRender; k++) {
+                    tick();
+                    if (windowView) applyView();
+                    auto t0 = std::chrono::steady_clock::now();
+                    renderFrame();
+                    total += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                }
+                std::printf("software render: %.2f ms per frame\n", total / timeRender);
             }
         }
         if (!saveBmp(surf, screenshot.c_str())) return 1;

@@ -301,6 +301,9 @@ private:
     std::map<int, std::shared_ptr<DisplayObject>> hitChildren_;
 };
 
+// The color transform masks are drawn with: every fill opaque, so only coverage counts.
+inline const ColorTransform kMaskColor{0, 0, 0, 0, 0, 0, 0, 255};
+
 // Renders `obj` under its parent's transform, applying its own matrix, color transform,
 // filters and blend mode (offscreen layers when needed). Only pixels inside `clip` are
 // written, so threads can render disjoint clips of one surface at the same time, after

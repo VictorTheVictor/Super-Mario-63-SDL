@@ -27,6 +27,8 @@
     F(RENDERBUFFERSTORAGE, RenderbufferStorage)                                               \
     F(BINDTEXTURE, BindTexture)                                                               \
     F(BLENDFUNC, BlendFunc)                                                                   \
+    F(BLENDFUNCSEPARATE, BlendFuncSeparate)                                                   \
+    F(COPYTEXSUBIMAGE2D, CopyTexSubImage2D)                                                   \
     F(BUFFERDATA, BufferData)                                                                 \
     F(CLEAR, Clear)                                                                           \
     F(CLEARCOLOR, ClearColor)                                                                 \
@@ -71,6 +73,7 @@
     F(UNIFORM2F, Uniform2f)                                                                   \
     F(UNIFORM3F, Uniform3f)                                                                   \
     F(UNIFORM4F, Uniform4f)                                                                   \
+    F(UNIFORMMATRIX4FV, UniformMatrix4fv)                                                     \
     F(USEPROGRAM, UseProgram)                                                                 \
     F(VERTEXATTRIBPOINTER, VertexAttribPointer)                                               \
     F(VIEWPORT, Viewport)
@@ -86,7 +89,7 @@ SM63_GL_FUNCTIONS(SM63_GL_DECLARE)
 extern PFNGLRENDERBUFFERSTORAGEMULTISAMPLEEXTPROC RenderbufferStorageMultisample;
 extern PFNGLBLITFRAMEBUFFERNVPROC BlitFramebuffer;
 constexpr GLenum kReadFramebuffer = 0x8CA8, kDrawFramebuffer = 0x8CA9, kRgba8 = 0x8058,
-                 kDepth24Stencil8 = 0x88F0;
+                 kDepth24Stencil8 = 0x88F0, kRgba16f = 0x881A, kHalfFloatOes = 0x8D61;
 
 // Loads every function from the current context (an "EXT" name where the plain one is
 // missing, as framebuffer objects are on some OpenGL 2.1 drivers); false (and `missing`

@@ -1026,7 +1026,10 @@ void MovieClip::render(Rasterizer& r, Surface& dst, const IntRect& clip, const M
         content.resize(mask.width, mask.height);
         IntRect local{0, 0, mask.width, mask.height};
         Matrix lm = Matrix::translate(-area.x0, -area.y0) * m;
-        renderDisplayObject(c, r, mask, local, lm, ColorTransform{}, movie, true);  // invisible masks still mask
+        // As in Flash, a mask is its shapes' coverage: their fills' alpha doesn't matter
+        // (every fill counts as opaque; antialiased edges still soften). Invisible masks
+        // still mask.
+        renderDisplayObject(c, r, mask, local, lm, kMaskColor, movie, true);
         for (auto n = first; n != last; ++n) renderDisplayObject(*n->second, r, content, local, lm, cx, movie);
         applyMask(content, mask);
         compositeLayer(dst, clip, content, area.x0, area.y0, BlendNormal, ColorTransform{});
