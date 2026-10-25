@@ -50,6 +50,8 @@ public:
     // unpaused; voices started while paused (a pause menu's sounds) play normally.
     void setPaused(bool paused);
     bool paused() const { return paused_; }
+    // While paused: holds a voice started meanwhile too (released by unpausing).
+    void hold(VoiceId id);
     bool isPlaying(VoiceId id) const;
     bool isTagPlaying(uint32_t tag) const;
     double positionMs(VoiceId id) const;

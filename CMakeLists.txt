@@ -114,34 +114,36 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(game PRIVATE -Wno-unused-value -Wno-unused-variable)
 endif()
 
-# Fonts for text the SWF's embedded fonts can't fully draw (they often hold only the
-# letters of a field's initial text), compiled in from fonts/ when present: Arial (regular,
-# bold, italic) and Comic Sans MS (see cmake/embed_fonts.cmake). They are Microsoft's:
-# keep them out of the repository (fonts/ is ignored).
+# Assets compiled in when present (see cmake/embed_assets.cmake); they belong to their
+# makers, so keep them out of the repository (fonts/ and *.mp3 at the root are ignored):
+# - fonts for text the SWF's embedded fonts can't fully draw (they often hold only the
+#   letters of a field's initial text): Arial (regular, bold, italic) and Comic Sans MS;
+# - the sound played when the pause menu opens and closes.
 set(SM63_FONT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/fonts" CACHE PATH "TrueType fonts to embed (optional)")
-set(SM63_FONTS_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/embedded_fonts.cpp")
-file(GLOB SM63_FONT_FILES CONFIGURE_DEPENDS "${SM63_FONT_DIR}/*.ttf" "${SM63_FONT_DIR}/*.TTF")
-# Rewritten only when the set of fonts changes: fonts copied in keep old timestamps, so
+set(SM63_PAUSE_SOUND "${CMAKE_CURRENT_SOURCE_DIR}/SM64_Pause.oga.mp3" CACHE FILEPATH "Pause menu MP3 to embed (optional)")
+set(SM63_ASSETS_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/embedded_assets.cpp")
+file(GLOB SM63_ASSET_FILES CONFIGURE_DEPENDS "${SM63_FONT_DIR}/*.ttf" "${SM63_FONT_DIR}/*.TTF" "${SM63_PAUSE_SOUND}")
+# Rewritten only when the set of files changes: files copied in keep old timestamps, so
 # their own times can't tell the build that something was added or removed.
-file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/font_list.txt" CONTENT "${SM63_FONT_FILES}\n")
-add_custom_command(OUTPUT "${SM63_FONTS_CPP}"
-    COMMAND ${CMAKE_COMMAND} -DFONT_DIR=${SM63_FONT_DIR} -DOUT=${SM63_FONTS_CPP}
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fonts.cmake
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_fonts.cmake ${SM63_FONT_FILES}
-            "${CMAKE_CURRENT_BINARY_DIR}/generated/font_list.txt")
-add_library(embedded_fonts STATIC "${SM63_FONTS_CPP}")
-target_include_directories(embedded_fonts PRIVATE src)
-target_link_libraries(embedded_fonts PRIVATE flash)
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/asset_list.txt" CONTENT "${SM63_ASSET_FILES}\n")
+add_custom_command(OUTPUT "${SM63_ASSETS_CPP}"
+    COMMAND ${CMAKE_COMMAND} -DFONT_DIR=${SM63_FONT_DIR} -DPAUSE_SOUND=${SM63_PAUSE_SOUND} -DOUT=${SM63_ASSETS_CPP}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_assets.cmake
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_assets.cmake ${SM63_ASSET_FILES}
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/asset_list.txt")
+add_library(embedded_assets STATIC "${SM63_ASSETS_CPP}")
+target_include_directories(embedded_assets PRIVATE src)
+target_link_libraries(embedded_assets PRIVATE flash)
 
 if(ANDROID)
     # SDL's Java activity loads libSDL2.so, then libmain.so, and calls its SDL_main.
-    add_library(main SHARED src/main.cpp src/EdgeFill.cpp src/EdgeLinks.cpp)
-    target_link_libraries(main PRIVATE game embedded_fonts ${SM63_SDL_LIBS})
+    add_library(main SHARED src/main.cpp src/EdgeFill.cpp)
+    target_link_libraries(main PRIVATE game embedded_assets ${SM63_SDL_LIBS})
     return()  # the desktop tools and tests below are not built for Android
 endif()
 
-add_executable(sm63 src/main.cpp src/EdgeFill.cpp src/EdgeLinks.cpp)
-target_link_libraries(sm63 PRIVATE game embedded_fonts ${SM63_SDL_LIBS})
+add_executable(sm63 src/main.cpp src/EdgeFill.cpp)
+target_link_libraries(sm63 PRIVATE game embedded_assets ${SM63_SDL_LIBS})
 if(SM63_SDL_SOURCE AND NOT WIN32)
     # Portable Linux release: SDL2 is linked in, and so is the C++ runtime (testers'
     # distributions may have an older libstdc++); only glibc comes from the system.

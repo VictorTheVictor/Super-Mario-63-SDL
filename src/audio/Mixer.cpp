@@ -171,6 +171,12 @@ void Mixer::setPaused(bool paused) {
     for (auto& [id, v] : voices_) v.held = paused;
 }
 
+void Mixer::hold(VoiceId id) {
+    std::lock_guard<std::mutex> lock(mu_);
+    auto it = voices_.find(id);
+    if (it != voices_.end() && paused_) it->second.held = true;
+}
+
 void Mixer::mix(int16_t* out, size_t frames) {
     std::lock_guard<std::mutex> lock(mu_);
     scratch_.assign(frames * 2, 0.f);

@@ -36,7 +36,7 @@
 #include "flash/DisplayObject.h"
 #include "game/Scripts.h"
 #include "EdgeFill.h"
-#include "EmbeddedFonts.h"
+#include "EmbeddedAssets.h"
 #include "MissingSwfImage.h"
 #include "flash/Effects.h"
 #include "flash/Raster.h"
@@ -726,6 +726,13 @@ int main(int argc, char** argv) {
         as::diagnostics().enabled = diagnose;
         game::registerScripts();
         audioBridge = std::make_unique<as::AudioBridge>(movie, mixer);
+        // While the game's pause menu ("Pause New", sprite 795) is open, only its own
+        // sounds play; everything else started meanwhile (ambient loops) is held.
+        audioBridge->playsWhilePaused = [](const flash::DisplayObject* d) {
+            for (; d; d = d->parent())
+                if (d->definition() && d->definition()->id == 795) return true;
+            return false;
+        };
         player = std::make_unique<as::Player>(movie);
         if (renderThreads) player->setRenderThreads(renderThreads);
         if (noLayerCache) player->setLayerCaching(false);
@@ -765,7 +772,21 @@ int main(int argc, char** argv) {
             if (auto d = w.lock()) d->displayTransform = {};
         adjusted.clear();
         player->blackBeyondStage = false;
+        player->backgroundColor.reset();
         if (viewMode == Letterbox || viewScale <= 0) return;
+        // Menus whose background is a stage-sized opaque shape on the main timeline (the
+        // course select's white page): its color fills the rest of the window.
+        player->root().forEachChild([&](flash::DisplayObject& c) {
+            if (!c.visible || !dynamic_cast<flash::ShapeObject*>(&c) || !c.definition()) return;
+            flash::Rect b = c.worldMatrix().apply(c.localBounds());
+            if (std::fabs(b.xMin) > 20 || std::fabs(b.yMin) > 20 || std::fabs(b.xMax - W * 20) > 20 || std::fabs(b.yMax - H * 20) > 20)
+                return;
+            for (const auto& f : static_cast<flash::ShapeCharacter*>(c.definition())->def.fills)
+                if (f.type == flash::FillStyle::Solid && f.color.a == 255) {
+                    player->backgroundColor = f.color;
+                    return;
+                }
+        });
         // Door and course transitions (the star wipe and others) cover only the stage: show
         // them letterboxed.
         auto* transition = as::resolvePath(&player->root(), "_root.Transition");
@@ -942,7 +963,7 @@ int main(int argc, char** argv) {
         player->tick();
         if (noclip) pinChar();
         updateOptionsRow();
-        if (!noEdgeFill) edgeFill.update(*player, movie, viewMode != Letterbox);
+        if (!noEdgeFill) edgeFill.update(*player, viewMode != Letterbox);
     };
 
     // Pausing is the game's own pause menu ("Pause New", sprite 795, an unnamed clip in
@@ -956,8 +977,21 @@ int main(int argc, char** argv) {
                 auto* clip = dynamic_cast<MovieClip*>(&c);
                 if (clip && clip->definition() && clip->definition()->id == 795 && clip->currentFrame() > 1) open = true;
             });
-        if (open != mixer.paused()) std::printf("pause menu %s\n", open ? "open: sound held" : "closed: sound resumed");
+        if (open == mixer.paused()) return;
+        std::printf("pause menu %s\n", open ? "open: sound held" : "closed: sound resumed");
         mixer.setPaused(open);
+        // The pause sound (when the build embeds one), on opening and on closing; started
+        // after pausing, so it plays.
+        auto [data, size] = embeddedPauseSound();
+        if (data) {
+            audio::Source src;
+            src.codec = flash::SoundFormat::Mp3;
+            src.rate = 44100;
+            src.stereo = true;
+            src.data = data;
+            src.size = size;
+            mixer.play(audio::makeDecoder(src), {});
+        }
     };
 
     auto reportMissing = [&]() {
@@ -1011,10 +1045,15 @@ int main(int argc, char** argv) {
             if (player && !courseSpec.empty() && i == std::atoi(courseSpec.c_str() + courseSpec.rfind('@') + 1)) {
                 as::Value root = as::valueOf(&player->root());
                 // NAME or NAME,TRANSITION,X,Y (e.g. C-1,lefttransition2,700,-250, as a door does),
-                // or FUNCTION() to call one of the game's own starters (StartInsideofCastle()).
+                // or FUNCTION() / FUNCTION(n) to call one of the game's own starters
+                // (StartInsideofCastle(), gotoCourseSelect(1)).
                 std::string spec = courseSpec.substr(0, courseSpec.rfind('@'));
-                if (spec.size() > 2 && spec.compare(spec.size() - 2, 2, "()") == 0) {
-                    as::callFunction(root[spec.substr(0, spec.size() - 2).c_str()].get(), root, {});
+                if (size_t open = spec.find('('); open != std::string::npos && spec.back() == ')') {
+                    // FUNCTION() or FUNCTION(number): one of the game's starters.
+                    std::string arg = spec.substr(open + 1, spec.size() - open - 2);
+                    as::Value argv1[1] = {as::Value(std::atof(arg.c_str()))};
+                    as::callFunction(root[spec.substr(0, open).c_str()].get(), root,
+                                     arg.empty() ? as::Args{} : as::Args{argv1, 1});
                 } else {
                     std::vector<std::string> parts;
                     for (size_t a = 0, b; a <= spec.size(); a = b + 1) {

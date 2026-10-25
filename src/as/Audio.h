@@ -1,6 +1,7 @@
 #pragma once
 // Connects AS2 Sound objects and timeline sounds to the audio mixer.
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -28,10 +29,14 @@ public:
 
     // Once per frame after scripts: stream sync, onSoundComplete, Sound.position.
     void update(uint64_t frame);
+    // While the mixer is paused, sounds started by anything this doesn't accept (the
+    // starting Sound object's target clip, or the clip of a timeline sound) are held too.
+    std::function<bool(const flash::DisplayObject*)> playsWhilePaused;
     void trace(Gc& gc);
 
 private:
     int groupForSound(Object* sound);
+    void holdWhilePaused(audio::Mixer::VoiceId v, const flash::DisplayObject* origin);
     int groupForClip(const flash::DisplayObject* d);
     int groupForTarget(const flash::DisplayObject* target);
 

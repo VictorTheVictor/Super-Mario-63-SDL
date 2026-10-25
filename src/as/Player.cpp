@@ -239,7 +239,7 @@ void Player::tick() {
 
 void Player::render(flash::Rasterizer& r, flash::Surface& dst, double interpolation, double scale,
                     double originX, double originY) {
-    flash::Color bg = movie_.background;
+    flash::Color bg = backgroundColor.value_or(movie_.background);
     dst.clear(0xFF000000u | bg.r << 16 | bg.g << 8 | bg.b);
     if (scale <= 0) {
         // The surface may be larger than the stage: scale everything to fill its width.

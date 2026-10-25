@@ -62,6 +62,10 @@ int AudioBridge::groupForClip(const flash::DisplayObject* d) {
     return 0;
 }
 
+void AudioBridge::holdWhilePaused(audio::Mixer::VoiceId v, const flash::DisplayObject* origin) {
+    if (v && mixer_.paused() && !(playsWhilePaused && playsWhilePaused(origin))) mixer_.hold(v);
+}
+
 // ---------------------------------------------------------------- Sound objects
 
 void AudioBridge::start(Object* sound, const std::string& linkage, double offsetSec, int loops) {
@@ -75,6 +79,8 @@ void AudioBridge::start(Object* sound, const std::string& linkage, double offset
     p.tag = s->id;
     volumeChanged(sound);
     audio::Mixer::VoiceId v = mixer_.play(audio::makeDecoder(sourceOf(*s)), p);
+    Value target = getMember(Value(sound), internLiteral("__target"));
+    holdWhilePaused(v, displayOf(target));
     if (v) owned_.push_back({v, sound, s->id});
     sound->setOwn(internLiteral("duration"), s->durationMs());
 }
@@ -136,7 +142,7 @@ void AudioBridge::startSound(flash::MovieClip& clip, const flash::SoundStart& s)
     for (auto& e : s.envelope) p.envelope.push_back({e.pos44, e.left / 32768.f, e.right / 32768.f});
     p.group = groupForClip(&clip);
     p.tag = s.soundId;
-    mixer_.play(audio::makeDecoder(sourceOf(*snd)), p);
+    holdWhilePaused(mixer_.play(audio::makeDecoder(sourceOf(*snd)), p), &clip);
 }
 
 void AudioBridge::streamBlock(flash::MovieClip& clip, uint32_t block) {
@@ -165,6 +171,7 @@ void AudioBridge::streamBlock(flash::MovieClip& clip, uint32_t block) {
     audio::Mixer::Params p;
     p.group = groupForClip(&clip);
     audio::Mixer::VoiceId v = mixer_.play(audio::makeDecoder(src), p);
+    holdWhilePaused(v, &clip);
     if (v) streams_.push_back({std::static_pointer_cast<flash::MovieClip>(clip.shared_from_this()), v, block, frame_});
 }
 

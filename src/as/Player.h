@@ -6,6 +6,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -49,6 +50,9 @@ public:
     std::vector<flash::Matrix> backdropPlacements;
     // Paint everything beyond the stage edges black, over the whole frame (letterbox bars).
     bool blackBeyondStage = false;
+    // The frame's background instead of the movie's (a menu's own background color, so it
+    // also fills a window wider than the stage).
+    std::optional<flash::Color> backgroundColor;
     // Render threads, including the caller (default: the machine's hardware threads).
     void setRenderThreads(int n);
     // Keeping filtered layers between frames (on by default; off for comparisons).

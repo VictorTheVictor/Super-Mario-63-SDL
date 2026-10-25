@@ -79,7 +79,10 @@ the SWF onto the executable passes it as the path too.
 Symbol viewer keys: Space play/pause, Left/Right step a frame, Escape quit.
 Game mode: input goes to the game; Shift+Escape quits. P opens the game's own pause menu
 (Star Map, Options, FLUDD, Exit to leave a level), and so do Escape and a controller's
-Start button; the sound playing when it opens is held until it closes. The options screen
+Start button; the sound playing when it opens, and anything the game starts meanwhile
+(ambient loops), is held until it closes. A pause sound plays as it opens and closes when
+the build embeds one: put `SM64_Pause.oga.mp3` (an MP3) at the repository root (ignored by
+git) before building. The options screen
 has two placeholder buttons beside Quality (Controls and Advanced, unlabeled for now; they
 do nothing yet). F11 toggles fullscreen. F5 cycles
 how the window is filled:
@@ -97,10 +100,10 @@ then back to 1. Modes 2–8 fill the window and show what lies beyond the stage 
 hide the HUD's 25% black frame around the stage and the black rectangle behind it, move
 the HUD's counters, hint line and quality box to the window's edges, stretch the screen's
 dark overlay (the castle before enough stars) over the whole window, show door and
-course transitions letterboxed, and continue the ground past a level's left and right
-ends: where a side exit leads into another course part, that part's terrain is drawn
-there lined up with this one; elsewhere the terrain is mirrored about the end (shapes
-only, not trees or other objects; see src/EdgeFill.h and tools/edge_links.py). F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off: draw as fast as possible, to measure rendering), F8 toggles building
+course transitions letterboxed, fill menus with their own background color (the course
+select's white page), and continue the ground past a level's left and right ends by
+mirroring the terrain about each end (shapes only, not trees or other objects; not in
+the castle or other indoor courses; see src/EdgeFill.h). F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off: draw as fast as possible, to measure rendering), F8 toggles building
 nested filter layers once (on by default; off draws them per strip as before, slower, and can
 differ by 1/255 in a few pixels), F6 toggles
 smooth motion. The game's fps counter shows the frames actually drawn per second.
@@ -114,7 +117,7 @@ fields use Arial (bold for signs and messages, which lack J, Q, q, ";" and '"'; 
 italic for the music info) and Comic Sans MS bold (the star names). These are Microsoft's
 fonts and not in this repository: put your own `arialbd.ttf`, `arial.ttf`, `ariali.ttf`,
 `comicbd.ttf` and/or `comic.ttf` in `fonts/` (ignored by git) and CMake compiles them into
-the executable. From a Windows 7 ISO, for example:
+the executable (cmake/embed_assets.cmake, which also embeds the pause sound). From a Windows 7 ISO, for example:
 
     7z e win7.iso sources/install.wim
     7z e -ofonts install.wim 1/Windows/Fonts/{arial,arialbd,ariali,comic,comicbd}.ttf
@@ -161,5 +164,6 @@ Headless options for testing and profiling (with `--frames N`):
     --interpolate 0.5                       # screenshot halfway between the last two ticks
     --view 3 --window 1920x1080             # screenshot a window of that size in F5 mode 3
     --course C-1@F | --course C-1,lefttransition2,700,-250@F | --course StartInsideofCastle()@F
+    --course gotoCourseSelect(1)@F          # a starter function with a number argument
                                             # switch course at frame F (as the game does)
     --symbol '#2539'                        # view any character by id, scaled to fit
