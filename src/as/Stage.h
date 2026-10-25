@@ -56,6 +56,10 @@ struct StageContext {
     const flash::Movie* movie = nullptr;
     std::shared_ptr<flash::MovieClip> root;
     double mouseX = 0, mouseY = 0;  // stage pixels
+    // Clips that scripts hit-tested against the mouse position (hitTest(_root._xmouse,
+    // _root._ymouse, ...)) since the host last cleared this: most of the game's menu
+    // buttons are clips that check the mouse themselves. (The controller's menu cursor.)
+    std::vector<std::weak_ptr<flash::DisplayObject>> mouseProbes;
     std::string quality = "HIGH";
     std::string url = "file:///Super_Mario_63_2010.swf";  // MovieClip._url
 };

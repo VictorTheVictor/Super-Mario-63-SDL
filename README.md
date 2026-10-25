@@ -84,7 +84,8 @@ Start button; the sound playing when it opens, and anything the game starts mean
 the build embeds one: put `SM64_Pause.oga.mp3` (an MP3) at the repository root (ignored by
 git) before building. The options screen
 has two placeholder buttons beside Quality (Controls and Advanced, unlabeled for now; they
-do nothing yet). F11 toggles fullscreen.
+do nothing yet; they fade out with Quality when its choices open). F11 toggles fullscreen.
+F5 toggles the original letterboxed view everywhere, levels included.
 
 In a level the game fills the window and shows what lies beyond the stage edges: the
 HUD's 25% black frame around the stage and the black rectangle behind it are hidden, the
@@ -96,7 +97,7 @@ clip) like the game's camera does, and where the walls are closer together than 
 window, the rest is black. The title, menus and the course and star select are
 letterboxed (only the stage, black bars). Fades (to and from white
 or black) cover the window; the wipes in a level stay letterboxed. The game's
-pause menu's white panel covers the window and its counters move to the edges too. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off: draw as fast as possible, to measure rendering), F8 toggles building
+pause menu's white panel covers the window and its counters move to the edges too. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off by default: frames are drawn as fast as possible), F8 toggles building
 nested filter layers once (on by default; off draws them per strip as before, slower, and can
 differ by 1/255 in a few pixels), F6 toggles
 smooth motion. The game's fps counter shows the frames actually drawn per second.
@@ -118,7 +119,19 @@ the executable (cmake/embed_assets.cmake, which also embeds the pause sound). Fr
 Game controllers (SDL GameController, e.g. Xbox layout): D-pad or left stick moves, A jumps,
 B uses FLUDD, X spins, Y ground pounds and talks (Z), the bumpers also press Z. They press
 the same keys the game reads from the keyboard (S, C, X, Z and the arrows). The right stick
-zooms the camera: up zooms in, down zooms out (the game's + and - keys).
+zooms the camera: up zooms in, down zooms out (the game's + and - keys); in the credits it
+scrolls them (so does dragging them with the mouse or a finger).
+
+Controllers also play every menu (title, main menu, story files, options, extras, level
+designer, course and star select, and the pause menu): the D-pad or left stick moves a
+cursor between the screen's buttons (the mouse hovers the selected one), A selects the
+first button and then clicks the selected one, B clicks the screen's Cancel or Back
+(closing the pause menu when it has neither), and Start clicks the selected button (the
+title's Start); in a level Start opens and closes the pause menu. A screen opened over
+another (the quality choices; a story file's Play, Copy, Delete and Cancel) keeps the
+cursor until it is cancelled. When the selected button goes away, the nearest one is
+selected. Links (the Newgrounds banner, the Runouw credit and intro, a level's "view on
+site") open only from a real mouse click, never from the controller or a touch.
 Debugging: F2 toggles noclip (arrow keys fly Mario through walls, Shift for speed, easing to a stop; he is invulnerable meanwhile), F3
 shows every object's outline over the frame (shape edges in cyan; boxes for clips in
 green, text in yellow, buttons in magenta, masks in orange; invisible objects such as the

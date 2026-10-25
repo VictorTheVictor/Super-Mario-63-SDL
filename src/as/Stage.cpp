@@ -548,6 +548,9 @@ Value mc_hitTest(const Value& self, Args a) {
     }
     double x = a[0].toNumber() * 20, y = a[1].toNumber() * 20;
     if (std::isnan(x) || std::isnan(y)) return false;
+    StageContext& s = stage();
+    if (std::fabs(x - s.mouseX * 20) <= 10 && std::fabs(y - s.mouseY * 20) <= 10 && s.mouseProbes.size() < 4096)
+        s.mouseProbes.push_back(d->weak_from_this());
     if (a[2].toBoolean()) return d->hitTest(d->worldMatrix(), {x, y});
     Rect b = worldBounds(d);
     return !b.empty() && x >= b.xMin && x <= b.xMax && y >= b.yMin && y <= b.yMax;

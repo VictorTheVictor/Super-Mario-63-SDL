@@ -36,6 +36,7 @@
 #include "flash/DisplayObject.h"
 #include "game/Scripts.h"
 #include "EmbeddedAssets.h"
+#include "MenuCursor.h"
 #include "MissingSwfImage.h"
 #include "flash/Effects.h"
 #include "flash/Raster.h"
@@ -146,11 +147,15 @@ int flashAscii(const SDL_Keysym& k) {
     return 0;
 }
 
+// Controller buttons the menu cursor uses (see padMenu in main).
+enum PadButton { PadA = 1, PadB = 2, PadStart = 4, PadLeft = 8, PadRight = 16, PadUp = 32, PadDown = 64 };
+
 // Scripted input for headless runs, e.g.
 // "2490:move:225,150;2500:click:225,150;2600:press:Enter;2700:hold:Right;2800:release:Right"
+// "3000:pad:A" presses a controller button (A, B, Start, Left, Right, Up, Down).
 struct InputEvent {
     int frame;
-    enum Kind { KeyDown, KeyUp, Move, MouseDown, MouseUp } kind;
+    enum Kind { KeyDown, KeyUp, Move, MouseDown, MouseUp, PadDown, PadUp } kind;
     int code = 0;
     double x = 0, y = 0;
 };
@@ -187,6 +192,17 @@ std::vector<InputEvent> parseInput(const std::string& spec) {
             out.push_back({frame, InputEvent::Move, 0, x, y});
             out.push_back({frame, InputEvent::MouseDown, 0, x, y});
             out.push_back({frame + 1, InputEvent::MouseUp, 0, x, y});
+        } else if (what == "pad") {
+            static const std::map<std::string, int> pads = {{"A", PadA}, {"B", PadB}, {"Start", PadStart},
+                                                            {"Left", PadLeft}, {"Right", PadRight},
+                                                            {"Up", PadUp}, {"Down", PadDown}};
+            auto it = pads.find(arg);
+            if (it == pads.end()) {
+                std::fprintf(stderr, "unknown pad button '%s'\n", arg.c_str());
+                continue;
+            }
+            out.push_back({frame, InputEvent::PadDown, it->second});
+            out.push_back({frame + 2, InputEvent::PadUp, it->second});
         } else if (int code = keyByName(arg)) {
             if (what == "press" || what == "hold") out.push_back({frame, InputEvent::KeyDown, code});
             if (what == "press") out.push_back({frame + 2, InputEvent::KeyUp, code});
@@ -275,6 +291,15 @@ std::string waitForSwfDrop(int scale) {
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     return dropped;
+}
+
+// In a level: the main timeline on its "Courseframe" frame (the title screen also has a
+// course, its backdrop, but on the "Title" frame).
+bool inLevel(as::Player& player) {
+    MovieClip& r = player.root();
+    auto it = r.sprite()->labels.find("Courseframe");
+    return it != r.sprite()->labels.end() && r.currentFrame() == it->second &&
+           as::resolvePath(&r, "_root.Course") != nullptr;
 }
 
 bool saveBmp(const Surface& s, const char* path) {
@@ -564,6 +589,7 @@ int main(int argc, char** argv) {
     int scale = 2, frames = 0, sampleEvery = 0, benchFrom = 0;
     double renderScale = 1;  // headless output size, in multiples of the stage size
     int windowW = 0, windowH = 0;  // headless: --window WxH
+    bool letterboxOption = false;
     int renderThreads = 0;   // 0: one per hardware thread
     bool noLayerCache = false, noOcclusion = false;
     bool noInterpolation = false;  // --no-smooth-motion: draw only at game ticks
@@ -582,6 +608,7 @@ int main(int argc, char** argv) {
         else if (a == "--no-shared-layers") flash::renderSettings.shareNestedLayers = false;
         else if (a == "--deterministic") as::setDeterministic(63);
         else if (a == "--no-layer-cache") noLayerCache = true;
+        else if (a == "--letterbox") letterboxOption = true;
         else if (a == "--no-occlusion") noOcclusion = true;
         else if (a == "--no-smooth-motion") noInterpolation = true;
         else if (a == "--debug-overlay") debugOverlay = true;
@@ -752,6 +779,8 @@ int main(int argc, char** argv) {
     // off-stage content) and the black rectangle behind the stage are hidden, and the sky
     // (_root.FarBackground, roughly stage-sized; each course attaches its own) is extended
     // by a mirrored copy of itself on its left, the pair centered in the window.
+    // F5: everything letterboxed, levels too, as in the original (--letterbox headless).
+    bool letterboxAll = letterboxOption;
     // Objects shown differently from where the game put them (displayTransform): HUD
     // pieces at the window's edges, the screen filter stretched over the whole window.
     std::vector<std::weak_ptr<flash::DisplayObject>> adjusted;
@@ -766,7 +795,7 @@ int main(int argc, char** argv) {
         player->blackBeyond.reset();
         if (viewScale <= 0) return;
         // Outside a level (title, menus, the course and star select): letterboxed.
-        if (!as::resolvePath(&player->root(), "_root.Course")) {
+        if (letterboxAll || !inLevel(*player)) {
             player->blackBeyond = flash::Rect{0, 0, W * 20.0, H * 20.0};
             return;
         }
@@ -858,7 +887,8 @@ int main(int argc, char** argv) {
                 adjusted.push_back(c.weak_from_this());
             });
         // The game's pause menu ("Pause New", sprite 795, in Stats; its content is sprite 794):
-        // its white panel (shape 629) stretches over the window like the screen filter, and
+        // its white panels (shape 629, and the Options and Star Map pages' own: any shape the
+        // size of the stage) stretch over the window like the screen filter, and
         // its copy of the counters along the top goes to the window's edges like the HUD's.
         auto adjust = [&](flash::DisplayObject& c, const flash::Matrix& world) {
             flash::Matrix parent = c.parent() ? c.parent()->worldMatrix() : flash::Matrix{};
@@ -871,7 +901,9 @@ int main(int argc, char** argv) {
                 pause.forEachChild([&](flash::DisplayObject& content) {
                     if (!content.definition() || content.definition()->id != 794) return;
                     content.forEachChild([&](flash::DisplayObject& c) {
-                        if (c.definition() && c.definition()->id == 629) {
+                        flash::Rect pb = c.matrix.apply(c.localBounds());
+                        if (dynamic_cast<flash::ShapeObject*>(&c) && pb.xMax - pb.xMin >= (W - 2) * 20 &&
+                            pb.yMax - pb.yMin >= (H - 2) * 20) {
                             // Five overlapping gradients over the whole window: drawn once and
                             // reused while the menu is open.
                             c.cacheAsLayer = true;
@@ -986,6 +1018,14 @@ int main(int argc, char** argv) {
             }
             holder = row.get();
         }
+        // They go with the Quality button: fading out with it when it is clicked, gone
+        // while the quality choices show, and back when it returns.
+        flash::DisplayObject* qualityButton = nullptr;
+        quality->forEachChild([&](flash::DisplayObject& c) {
+            if (c.definition() && c.definition()->id == 9496 && c.visible) qualityButton = &c;
+        });
+        holder->visible = qualityButton != nullptr;
+        if (qualityButton) holder->cxform.aMul = qualityButton->cxform.aMul;
         for (const char* name : {"Controls", "Advanced"}) {
             as::Value button = as::getMember(as::valueOf(holder), as::intern(name));
             if (!button.isObject()) continue;
@@ -996,6 +1036,9 @@ int main(int argc, char** argv) {
         }
     };
 
+    // The controller's menu cursor (see MenuCursor).
+    MenuCursor menuCursor;
+    std::map<int, int> keyPulses;  // keys pressed for the controller: ticks until released
     auto tick = [&]() {
         if (!player) {
             symbolStage->advance();
@@ -1016,6 +1059,10 @@ int main(int argc, char** argv) {
             pinChar();
         }
         player->tick();
+        menuCursor.afterTick(*player);
+        for (auto it = keyPulses.begin(); it != keyPulses.end();)
+            if (--it->second <= 0) player->keyUp(it->first), it = keyPulses.erase(it);
+            else ++it;
         if (noclip) pinChar();
         updateOptionsRow();
     };
@@ -1048,6 +1095,41 @@ int main(int argc, char** argv) {
         }
     };
 
+    // The controller in menus: outside a level (title, menus, course and star select) and
+    // in the pause menu, the D-pad (or left stick) moves the menu cursor between the
+    // screen's buttons, A selects the first one and then clicks the selected one, B clicks
+    // the screen's Cancel or Back (closing the pause menu when it has neither), and Start
+    // clicks the selected button (or the first: the title's Start). Called every frame
+    // with the buttons held; returns whether the menu has the controller, whose buttons
+    // then press no game keys (Start still opens and closes the pause menu in a level).
+    int padMenuHeld = 0;
+    double padRepeatAt = 0;  // ms: when a held direction moves the cursor again
+    auto padMenu = [&](int held, double nowMs) {
+        bool level = inLevel(*player);
+        bool paused = mixer.paused();
+        bool menu = (!level || paused) && !menuCursor.targets().empty();
+        int pressed = held & ~padMenuHeld;
+        padMenuHeld = held;
+        if (!menu) {
+            menuCursor.clear();
+            return false;
+        }
+        int dirs = held & (PadLeft | PadRight | PadUp | PadDown);
+        if (pressed & dirs) padRepeatAt = nowMs + 400;
+        else if (dirs && nowMs >= padRepeatAt) pressed |= dirs, padRepeatAt = nowMs + 150;
+        if (pressed & PadLeft) menuCursor.move(*player, -1, 0);
+        if (pressed & PadRight) menuCursor.move(*player, 1, 0);
+        if (pressed & PadUp) menuCursor.move(*player, 0, -1);
+        if (pressed & PadDown) menuCursor.move(*player, 0, 1);
+        if (pressed & PadA) menuCursor.select(*player);
+        if ((pressed & PadB) && !menuCursor.back(*player) && paused) {
+            player->keyDown('P', 'p');  // close the pause menu
+            keyPulses['P'] = 2;
+        }
+        if ((pressed & PadStart) && !level) menuCursor.activate(*player);
+        return true;
+    };
+
     auto reportMissing = [&]() {
         if (player && !player->missingScripts().empty())
             std::printf("%zu frame scripts ran without a ported implementation\n",
@@ -1065,6 +1147,7 @@ int main(int argc, char** argv) {
             viewY = std::floor((windowH - H * viewScale) / 2);
         }
         std::vector<InputEvent> events = parseInput(inputSpec);
+        int simPad = 0;  // controller buttons held by "pad" input
         std::vector<double> tickMs, renderMs;
         for (int i = 0; i < frames; i++) {
 #if defined(__linux__) && !defined(__ANDROID__)
@@ -1080,8 +1163,11 @@ int main(int argc, char** argv) {
                         case InputEvent::Move: player->mouseMove(e.x, e.y); break;
                         case InputEvent::MouseDown: player->mouseDown(); break;
                         case InputEvent::MouseUp: player->mouseUp(); break;
+                        case InputEvent::PadDown: simPad |= e.code; break;
+                        case InputEvent::PadUp: simPad &= ~e.code; break;
                     }
                 }
+            if (player) padMenu(simPad, i * 1000.0 / movie.frameRate);
             if (player && sampleEvery && i % sampleEvery == 0) {
                 // One line per sample: root frame, then each root child as name@depth:frame.
                 MovieClip& r = player->root();
@@ -1232,6 +1318,14 @@ int main(int argc, char** argv) {
                             t.path.c_str(), t.text.c_str(), t.bounds.xMin, t.bounds.yMin, t.bounds.xMax,
                             t.bounds.yMax, t.extent.xMin, t.extent.yMin, t.extent.xMax, t.extent.yMax,
                             t.autoSize ? " [autoSize]" : "");
+            for (const auto& t : menuCursor.targets()) {
+                auto o = t.obj.lock();
+                auto id = [](flash::DisplayObject* d) { return d && d->definition() ? (int)d->definition()->id : -1; };
+                std::printf("  menu target %s (char %d, parent %d) at (%.0f,%.0f)-(%.0f,%.0f) click (%.0f,%.0f) \"%s\"\n",
+                            o ? as::targetPath(o.get()).c_str() : "?", id(o.get()), o ? id(o->parent()) : -1,
+                            t.bounds.xMin, t.bounds.yMin, t.bounds.xMax, t.bounds.yMax, t.point.x, t.point.y,
+                            t.label.c_str());
+            }
             for (const auto& c : player->clickables())
                 std::printf("  clickable %s at (%.0f,%.0f)-(%.0f,%.0f)%s  char %d, events 0x%x, methods [%s]\n",
                             c.path.c_str(), c.bounds.xMin, c.bounds.yMin, c.bounds.xMax, c.bounds.yMax,
@@ -1299,8 +1393,9 @@ int main(int argc, char** argv) {
 #endif
     SDL_Window* win = SDL_CreateWindow("Super Mario 63", SDL_WINDOWPOS_CENTERED,
                                        SDL_WINDOWPOS_CENTERED, W * scale, H * scale, windowFlags);
-    SDL_Renderer* ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_PRESENTVSYNC);
-    bool vsync = true;
+    // Vsync starts off (frames drawn as fast as possible); F7 turns it on.
+    SDL_Renderer* ren = SDL_CreateRenderer(win, -1, 0);
+    bool vsync = false;
     SDL_Texture* tex = nullptr;
     // The frame fills the window, the stage centered in it at the largest scale that fits
     // (see applyView), rendered at the window's real pixel size so vector art stays sharp
@@ -1335,8 +1430,15 @@ int main(int argc, char** argv) {
     // Links (the loading screen's Newgrounds banner, the Runouw intro) open with the OS's
     // default handler on desktops; on phones a tap on them would leave the game, so they
     // do nothing there. The cursor turns into a hand over clickable things, as in Flash.
+    // Only a real mouse's click opens a link: not a touch (a mouse event too) and not the
+    // controller's menu cursor.
+    bool mouseClicking = false;
 #ifndef __ANDROID__
-    as::host().openUrl = [](const std::string& url) {
+    as::host().openUrl = [&](const std::string& url) {
+        if (!mouseClicking) {
+            std::printf("not opening %s (not a mouse click)\n", url.c_str());
+            return;
+        }
         std::printf("opening %s\n", url.c_str());
         if (SDL_OpenURL(url.c_str()) != 0) std::fprintf(stderr, "could not open %s: %s\n", url.c_str(), SDL_GetError());
     };
@@ -1350,8 +1452,34 @@ int main(int argc, char** argv) {
         showingHand = hand;
         SDL_SetCursor(hand ? handCursor : arrowCursor);
     };
+    // The credits (Extras > Credits) scroll by dragging the text with the mouse (or a
+    // finger) and with the right stick, besides the game's own arrows: the same target
+    // offset (`num` on the Credits Mask clip, sprite 9525, which eases its text there).
+    auto scrollCredits = [&](double dy) {  // stage pixels; positive moves the text down
+        auto* menu = as::resolvePath(&player->root(), "_root.m");
+        if (!menu) return false;
+        flash::DisplayObject* mask = nullptr;
+        std::function<void(flash::DisplayObject&, int)> find = [&](flash::DisplayObject& d, int depth) {
+            if (mask) return;
+            if (d.definition() && d.definition()->id == 9525 && d.visible) mask = &d;
+            else if (depth < 3) d.forEachChild([&](flash::DisplayObject& c) { find(c, depth + 1); });
+        };
+        find(*menu, 0);
+        if (!mask) return false;
+        as::Value clip = as::valueOf(mask);
+        double scale = mask->worldMatrix().d;  // stage pixels per mask pixel, vertically
+        double height = as::getMember(as::getMember(clip, as::intern("txt")), as::intern("_height")).toNumber();
+        double num = as::getMember(clip, as::intern("num")).toNumber() + dy / (scale > 0 ? scale : 1);
+        num = std::clamp(num, std::min(0.0, -(height - 300)), 0.0);
+        as::setMember(clip, as::intern("num"), num);
+        return true;
+    };
+    Uint32 lastPadPoll = SDL_GetTicks();
     auto updatePad = [&]() {
         std::set<int> held;
+        double padDt = (SDL_GetTicks() - lastPadPoll) / 1000.0;
+        lastPadPoll = SDL_GetTicks();
+        int menuHeld = 0;  // for padMenu
         padLeft = padRight = padUp = padDown = false;
         for (int i = 0; i < SDL_NumJoysticks(); i++) {
             // Opened in SDL_CONTROLLERDEVICEADDED; null for joysticks that aren't controllers.
@@ -1365,17 +1493,28 @@ int main(int argc, char** argv) {
             padRight |= button(SDL_CONTROLLER_BUTTON_DPAD_RIGHT) || lx > 0.35;
             padUp |= button(SDL_CONTROLLER_BUTTON_DPAD_UP) || ly < -0.6;
             padDown |= button(SDL_CONTROLLER_BUTTON_DPAD_DOWN) || ly > 0.6;
-            if (button(SDL_CONTROLLER_BUTTON_A)) held.insert('S');
-            if (button(SDL_CONTROLLER_BUTTON_B)) held.insert('C');
+            if (button(SDL_CONTROLLER_BUTTON_A)) held.insert('S'), menuHeld |= PadA;
+            if (button(SDL_CONTROLLER_BUTTON_B)) held.insert('C'), menuHeld |= PadB;
             if (button(SDL_CONTROLLER_BUTTON_X)) held.insert('X');
             if (button(SDL_CONTROLLER_BUTTON_Y)) held.insert('Z');
             if (button(SDL_CONTROLLER_BUTTON_LEFTSHOULDER) || button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER))
                 held.insert('Z');
-            if (button(SDL_CONTROLLER_BUTTON_START)) held.insert('P');  // the game's pause menu
+            if (button(SDL_CONTROLLER_BUTTON_START)) held.insert('P'), menuHeld |= PadStart;  // the game's pause menu
             // Right stick up/down zooms the camera in/out (the game's + and - keys).
             double ry = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0;
             if (ry < -0.5) held.insert(187);
             if (ry > 0.5) held.insert(189);
+            // In the credits it scrolls them instead: up shows earlier lines.
+            if (std::fabs(ry) > 0.2 && !inLevel(*player)) scrollCredits(-ry * 500 * std::min(padDt, 0.1));
+        }
+        menuHeld |= (padLeft ? PadLeft : 0) | (padRight ? PadRight : 0) | (padUp ? PadUp : 0) | (padDown ? PadDown : 0);
+        if (padMenu(menuHeld, (double)SDL_GetTicks())) {
+            // The menu has the controller: its buttons press no game keys, except Start
+            // closing the pause menu.
+            held.erase('S');
+            held.erase('C');
+            if (!inLevel(*player)) held.erase('P');
+            padLeft = padRight = padUp = padDown = false;
         }
         if (!noclip) {  // in noclip the directions fly Mario instead
             if (padLeft) held.insert(as::keycode::Left);
@@ -1462,7 +1601,7 @@ int main(int argc, char** argv) {
             char title[128];
             std::snprintf(title, sizeof title, "Super Mario 63 — %.0f fps, %dx%d%s%s%s", framesShown / secs, surf.width,
                           surf.height, smooth ? "" : " (smooth motion off)", noclip ? " [NOCLIP]" : "",
-                          vsync ? "" : " (vsync off)");
+                          vsync ? " (vsync on)" : "");
             SDL_SetWindowTitle(win, title);
             framesShown = 0;
             fpsSince = SDL_GetPerformanceCounter();
@@ -1514,6 +1653,12 @@ int main(int argc, char** argv) {
                             std::snprintf(path, sizeof path, "sm63-dump-%d.bmp", dumps);
                             saveBmp(surf, path);
                             std::printf("wrote sm63-dump-%d.txt and .bmp\n", dumps);
+                            break;
+                        }
+                        if (e.key.keysym.sym == SDLK_F5 && !e.key.repeat) {
+                            letterboxAll = !letterboxAll;
+                            std::printf("letterbox %s\n", letterboxAll ? "on" : "off");
+                            redraw = true;
                             break;
                         }
                         if (e.key.keysym.sym == SDLK_F3 && !e.key.repeat) {
@@ -1581,6 +1726,13 @@ int main(int argc, char** argv) {
                         break;
                     }
                     case SDL_MOUSEMOTION: {
+                        menuCursor.clear();  // the real mouse takes over from the controller
+                        if ((e.motion.state & SDL_BUTTON_LMASK) && viewScale > 0 && !inLevel(*player)) {
+                            int ww, wh, ow, oh;
+                            SDL_GetWindowSize(win, &ww, &wh);
+                            SDL_GetRendererOutputSize(ren, &ow, &oh);
+                            scrollCredits(e.motion.yrel * (double)oh / std::max(1, wh) / viewScale);
+                        }
                         double mx = e.motion.x, my = e.motion.y;
                         {
                             // Window coordinates -> output pixels -> stage pixels.
@@ -1594,10 +1746,14 @@ int main(int argc, char** argv) {
                         break;
                     }
                     case SDL_MOUSEBUTTONDOWN:
+                        mouseClicking = e.button.which != SDL_TOUCH_MOUSEID;
                         if (e.button.button == SDL_BUTTON_LEFT) player->mouseDown();
+                        mouseClicking = false;
                         break;
                     case SDL_MOUSEBUTTONUP:
+                        mouseClicking = e.button.which != SDL_TOUCH_MOUSEID;
                         if (e.button.button == SDL_BUTTON_LEFT) player->mouseUp();
+                        mouseClicking = false;
                         break;
                 }
                 continue;
