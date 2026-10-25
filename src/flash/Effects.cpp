@@ -178,8 +178,10 @@ void bevel(Surface& s, const Filter& f, const ParallelFor& pf) {
     Plane A = alphaPlane(s, pf);
     Plane B = A;
     blurPlane(B, w, h, f.blurX, f.blurY, f.passes, pf);
-    int dx = (int)std::lround(std::cos(f.angle) * f.distance / 2);
-    int dy = (int)std::lround(std::sin(f.angle) * f.distance / 2);
+    // The blurred alpha is compared a full distance to each side, as Flash (and Ruffle)
+    // do: the lit edge is fully lit right at the shape's edge.
+    int dx = (int)std::lround(std::cos(f.angle) * f.distance);
+    int dy = (int)std::lround(std::sin(f.angle) * f.distance);
     bool full = f.onTop;
     bool inner = f.inner && !full;
     forRanges(pf, h, [&](int y0, int y1) {

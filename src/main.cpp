@@ -237,6 +237,14 @@ void printTree(FILE* out, flash::DisplayObject& d, int depth, int maxDepth) {
                  b.yMax / 20, d.visible ? "visible" : "HIDDEN", d.cxform.aMul, d.matrix.a, d.matrix.d, d.blendMode,
                  d.filters.size(), d.cxform.rAdd, d.cxform.gAdd, d.cxform.bAdd, d.cxform.rMul, d.cxform.gMul,
                  d.cxform.bMul);
+    static const char* const filterNames[] = {"shadow", "blur", "glow", "bevel", "gradglow", "convolution", "matrix", "gradbevel"};
+    for (const flash::Filter& f : d.filters)
+        std::fprintf(out, "  %*s  %s blur %.1fx%.1f x%d angle %.0f dist %.1f strength %.2f color %02x%02x%02x%02x"
+                          " highlight %02x%02x%02x%02x%s%s%s%s\n",
+                     depth * 2, "", f.type < 8 ? filterNames[f.type] : "?", f.blurX, f.blurY, f.passes,
+                     f.angle * 180 / M_PI, f.distance, f.strength, f.color.r, f.color.g, f.color.b, f.color.a,
+                     f.highlight.r, f.highlight.g, f.highlight.b, f.highlight.a, f.inner ? " inner" : "",
+                     f.knockout ? " knockout" : "", f.compositeSource ? "" : " no-source", f.onTop ? " on-top" : "");
     if (depth < maxDepth) d.forEachChild([&](flash::DisplayObject& c) { printTree(out, c, depth + 1, maxDepth); });
 }
 

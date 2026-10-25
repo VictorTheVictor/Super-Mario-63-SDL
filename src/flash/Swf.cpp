@@ -65,8 +65,10 @@ std::vector<Filter> parseFilters(Reader& r) {
                 break;
             }
             case Filter::Bevel: {
-                f.color = r.rgba();
+                // The SWF spec lists the shadow color first, but Flash writes the highlight
+                // first (as Ruffle reads it too).
                 f.highlight = r.rgba();
+                f.color = r.rgba();
                 f.blurX = r.fixed16();
                 f.blurY = r.fixed16();
                 f.angle = r.fixed16();

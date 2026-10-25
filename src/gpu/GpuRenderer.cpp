@@ -1113,8 +1113,8 @@ GpuRenderer::Target* GpuRenderer::applyFilters(Target* layer, const std::vector<
                 Target* bl = blur(alphaPlane(layer, 0, 0, false), f.blurX, f.blurY, f.passes);
                 Target* out = acquire(w, h, false, false);
                 twoTextures(bevelProgram_, layer, bl);
-                int dx = (int)std::lround(std::cos(f.angle) * f.distance / 2);
-                int dy = (int)std::lround(std::sin(f.angle) * f.distance / 2);
+                int dx = (int)std::lround(std::cos(f.angle) * f.distance);
+                int dy = (int)std::lround(std::sin(f.angle) * f.distance);
                 gl::Uniform2f(loc(bevelProgram_, "shift"), (float)dx, (float)dy);
                 gl::Uniform1f(loc(bevelProgram_, "strength"), (float)f.strength);
                 gl::Uniform4f(loc(bevelProgram_, "highlight"), f.highlight.r / 255.f, f.highlight.g / 255.f,
@@ -1158,18 +1158,16 @@ void GpuRenderer::composite(GLuint texture, int texW, int texH, int x0, int y0, 
     bool readsBehind = !(mode <= BlendLayer || mode == BlendAdd || mode == BlendAlpha || mode == BlendErase);
     Target* behind = nullptr;
     if (readsBehind) {
-        // A copy of what is behind the layer (its whole box, rows top down where possible).
+        // A copy of what is behind the layer (its whole box), rows as the surface has them:
+        // a multisampled surface (the window's) can only be copied unflipped, so the shader
+        // reads it upside down when its rows run bottom up.
         behind = acquire(w, h, false, false);
         int sy0 = surface_.bottomUp ? surface_.h - (y0 + h) : y0;
         if (gl::BlitFramebuffer) {
             gl::Disable(GL_SCISSOR_TEST);
             gl::BindFramebuffer(gl::kReadFramebuffer, surface_.fbo);
             gl::BindFramebuffer(gl::kDrawFramebuffer, behind->fbo);
-            // Flipped while copying when the surface's rows run bottom up.
-            if (surface_.bottomUp)
-                gl::BlitFramebuffer(x0, sy0, x0 + w, sy0 + h, 0, h, w, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-            else
-                gl::BlitFramebuffer(x0, sy0, x0 + w, sy0 + h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            gl::BlitFramebuffer(x0, sy0, x0 + w, sy0 + h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
             bind(surface_);
         } else {
             gl::ActiveTexture(GL_TEXTURE0);
@@ -1189,7 +1187,7 @@ void GpuRenderer::composite(GLuint texture, int texW, int texH, int x0, int y0, 
     gl::Uniform2f(loc(p, "origin"), (float)x0, (float)y0);
     gl::Uniform2f(loc(p, "size"), (float)w, (float)h);
     gl::Uniform1i(loc(p, "bgra"), bgra);
-    gl::Uniform1i(loc(p, "auxFlip"), behind && !gl::BlitFramebuffer && surface_.bottomUp);
+    gl::Uniform1i(loc(p, "auxFlip"), behind && surface_.bottomUp);
     gl::Uniform1i(loc(p, "mode"), mode);
     bool on = !cx.isIdentity();
     gl::Uniform1i(loc(p, "cxOn"), on);
