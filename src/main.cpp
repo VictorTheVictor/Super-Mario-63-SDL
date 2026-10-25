@@ -531,6 +531,17 @@ extern "C" void sm63_debug_textfield(const char* path) {
                 "font %d size %.1f px align %d margins %.0f/%.0f leading %.0f; text %zu chars, %zu lines\n",
                 path, e->id, e->wordWrap, e->multiline, e->html, e->autoSize, e->readOnly, e->fontId,
                 e->fontHeight / 20, e->align, e->leftMargin / 20, e->rightMargin / 20, e->leading / 20, t.size(), lines);
+    if (auto* fc = dynamic_cast<const flash::FontCharacter*>(tf->movie().character(e->fontId)))
+        std::printf("    font %d \"%s\"%s%s, %zu glyphs: \"%s\"\n", e->fontId, fc->name.c_str(), fc->bold ? " bold" : "",
+                    fc->italic ? " italic" : "", fc->glyphs.size(),
+                    flash::utf8Encode(std::u32string(fc->codes.begin(), fc->codes.end())).substr(0, 60).c_str());
+    std::printf("    drawn with fonts: ");
+    for (const auto& g : tf->placedGlyphs())
+        for (auto& [id, c] : tf->movie().characters())
+            if (auto* f = dynamic_cast<const flash::FontCharacter*>(c.get()))
+                for (size_t k = 0; k < f->glyphs.size(); k++)
+                    if (&f->glyphs[k] == g.shape) std::printf("%d%s ", id, f->bold ? "b" : "");
+    std::printf("\n");
     double boxW = (tf->bounds.xMax - tf->bounds.xMin) / 20;
     int shown = 0;
     for (const auto& l : tf->lines())
@@ -593,6 +604,7 @@ int main(int argc, char** argv) {
         SDL_free(base);
     }
     std::string attachSpec;  // --attach SYMBOL,PARENT,X,Y@FRAME: attachMovie for tests
+    std::vector<std::string> textfieldPaths;  // --textfield PATH: describe that text field
     std::string symbol, screenshot, watch, inputSpec, calls, courseSpec, treePath, probes,
                 gotoSpec, trackSpec, setSpec, findText;
     int scale = 2, frames = 0, sampleEvery = 0, benchFrom = 0;
@@ -643,6 +655,7 @@ int main(int argc, char** argv) {
         else if (a == "--call" && i + 1 < argc) calls = argv[++i], dump = true;
         else if (a == "--course" && i + 1 < argc) courseSpec = argv[++i];
         else if (a == "--attach" && i + 1 < argc) attachSpec = argv[++i];
+        else if (a == "--textfield" && i + 1 < argc) textfieldPaths.push_back(argv[++i]), dump = true;
         else if (a == "--tree" && i + 1 < argc) treePath = argv[++i], dump = true;
         else if (a == "--probe" && i + 1 < argc) probes = argv[++i], dump = true;
         else if (a == "--goto" && i + 1 < argc) gotoSpec = argv[++i];
@@ -653,6 +666,9 @@ int main(int argc, char** argv) {
     }
 
     registerEmbeddedFonts();
+    // The HUD counters (coins, lives, stars, red coins...) in Arial Bold, as in the 2009
+    // release: this SWF's re-publish put them in its plain embedded Arial (font 187).
+    flash::textFontsShownBold = {187};
     Movie movie;
     std::string err;
     Uint32 t0 = SDL_GetTicks();
@@ -1444,6 +1460,7 @@ int main(int argc, char** argv) {
                 else std::printf("  %s: not found\n", treePath.c_str());
             }
             for (const auto& t : player->textOverflows()) sm63_debug_textfield(t.path.c_str());
+            for (const auto& p : textfieldPaths) sm63_debug_textfield(p.c_str());
             // --probe "_root.Course.Water@700,200;...": shape hit tests at stage points
             for (size_t ps = 0; ps < probes.size();) {
                 size_t semi = probes.find(';', ps);
@@ -1678,6 +1695,7 @@ int main(int argc, char** argv) {
     // (jump), B = C (FLUDD), X = X (spin), Y = Z (ground pound, also talk), bumpers = Z.
     // Each frame the held keys are compared with the last frame and only changes are sent.
     std::set<int> padKeys;
+    std::set<SDL_Scancode> fakeRepeats;  // presses that are auto-repeat, not new presses
 
     // Links (the loading screen's Newgrounds banner, the Runouw intro) open with the OS's
     // default handler on desktops; on phones a tap on them would leave the game, so they
@@ -2023,12 +2041,26 @@ int main(int argc, char** argv) {
                         if (noclip && (e.key.keysym.sym == SDLK_LEFT || e.key.keysym.sym == SDLK_RIGHT ||
                                        e.key.keysym.sym == SDLK_UP || e.key.keysym.sym == SDLK_DOWN))
                             break;  // noclip flies with the arrows; the game doesn't see them
-                        if (!e.key.repeat) {
+                        if (!e.key.repeat && !fakeRepeats.erase(e.key.keysym.scancode)) {
                             int code = flashKeyCode(e.key.keysym.sym);
                             if (code) player->keyDown(code, flashAscii(e.key.keysym));
                         }
                         break;
                     case SDL_KEYUP: {
+                        // A held key's auto-repeat can arrive as a release and a press at the
+                        // same moment (X11 without detectable auto-repeat): the key stays
+                        // down for the game, which would otherwise see it pressed again and
+                        // again (toggling the pause menu, with its sound, while Esc is held).
+                        SDL_Event next[8];
+                        int n = SDL_PeepEvents(next, 8, SDL_PEEKEVENT, SDL_KEYDOWN, SDL_KEYDOWN);
+                        bool fake = false;
+                        for (int k = 0; k < n && !fake; k++)
+                            fake = next[k].key.keysym.scancode == e.key.keysym.scancode &&
+                                   next[k].key.timestamp - e.key.timestamp <= 2;
+                        if (fake) {
+                            fakeRepeats.insert(e.key.keysym.scancode);
+                            break;
+                        }
                         int code = flashKeyCode(e.key.keysym.sym);
                         if (code) player->keyUp(code);
                         break;

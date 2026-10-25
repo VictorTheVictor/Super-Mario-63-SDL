@@ -2,6 +2,7 @@
 // Embedded fonts (DefineFont2/3), static text (DefineText) and text fields
 // (DefineEditText) with a minimal HTML subset.
 
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -127,6 +128,7 @@ public:
         return q.x >= bounds.xMin && q.x <= bounds.xMax && q.y >= bounds.yMin && q.y <= bounds.yMax;
     }
     const EditTextCharacter* edit() const { return edit_; }
+    const Movie& movie() const { return movie_; }
 
     struct Format {
         const FontCharacter* font = nullptr;
@@ -171,6 +173,12 @@ private:
     bool dirty_ = true;
     uint64_t layoutVersion_ = 0;  // nextContentVersion() of the last layout
 };
+
+// Port data fix: plain text fields bound to a variable that use one of these (regular)
+// fonts are drawn in the bold font of the same name. The 2010 SWF the port runs was
+// re-published with the HUD counters in plain embedded Arial; the 2009 release drew them
+// in Arial Bold (set by main).
+extern std::set<uint16_t> textFontsShownBold;
 
 // Fills all of a glyph's paths with a solid color.
 void drawGlyph(Rasterizer& r, Surface& dst, const IntRect& clip, const ShapeDef& glyph,

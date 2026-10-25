@@ -11,6 +11,8 @@
 
 namespace flash {
 
+std::set<uint16_t> textFontsShownBold;
+
 // ---------------------------------------------------------------- UTF-8
 
 std::u32string utf8Decode(const std::string& s) {
@@ -261,6 +263,15 @@ void TextField::setText(const std::string& plain) {
     Format fmt;
     auto* fc = movie_.character(edit_->fontId);
     fmt.font = fc && fc->kind == Character::Font ? static_cast<FontCharacter*>(fc) : nullptr;
+    if (fmt.font) {
+        // Plain text keeps its font's weight.
+        fmt.bold = fmt.font->bold;
+        fmt.italic = fmt.font->italic;
+        if (!fmt.bold && textFontsShownBold.count(edit_->fontId) && !variable.empty()) {
+            if (auto* b = findFont(fmt.font->name, true, fmt.italic); b && b->bold) fmt.font = b;
+            fmt.bold = true;
+        }
+    }
     fmt.size = edit_->fontHeight;
     fmt.color = color_;
     fmt.align = edit_->align;
@@ -359,6 +370,10 @@ void TextField::setHtmlText(const std::string& src) {
     Format base;
     auto* fc = movie_.character(edit_->fontId);
     base.font = fc && fc->kind == Character::Font ? static_cast<FontCharacter*>(fc) : nullptr;
+    // As in Flash, HTML text is regular unless its tags say otherwise (<b>, <i>), whatever
+    // the weight of the field's font: the font of that name and weight is used.
+    if (base.font)
+        if (auto* regular = findFont(base.font->name, false, false)) base.font = regular;
     base.size = edit_->fontHeight;
     base.color = color_;
     base.align = edit_->align;
@@ -508,19 +523,26 @@ void TextField::layout() {
     std::deque<Format> substitutes;
     auto formatFor = [&](const Run& run) -> const Format* {
         const FontCharacter* font = run.format.font;
-        if (!font || covers(*font, run.text)) return &run.format;
+        if (!font) return &run.format;
+        // A font of the wrong weight (the only one of its name embedded) is used only if
+        // no font of the right weight has all the characters.
+        bool rightWeight = font->bold == run.format.bold && font->italic == run.format.italic;
+        if (covers(*font, run.text) && rightWeight) return &run.format;
         const FontCharacter* best = nullptr;
         int bestScore = -1;
         auto consider = [&](const FontCharacter* f) {
             if (f->glyphs.empty() || !covers(*f, run.text)) return;
-            int score = 8 * (f->name == font->name) + 4 * (f->bold == font->bold) + 2 * (f->italic == font->italic) +
-                        (f->name == "Arial");
+            // The weight the text asks for, which the font it names may not have.
+            int score = 8 * (f->name == font->name) + 4 * (f->bold == run.format.bold) +
+                        2 * (f->italic == run.format.italic) + (f->name == "Arial");
             if (score > bestScore) best = f, bestScore = score;
         };
         for (auto& f : fallbackFonts()) consider(f.get());
         for (auto& [id, c] : movie_.characters())
             if (c->kind == Character::Font) consider(static_cast<const FontCharacter*>(c.get()));
-        if (!best) return &run.format;
+        if (!best || (!rightWeight && covers(*font, run.text) &&
+                      (best->bold != run.format.bold || best->italic != run.format.italic)))
+            return &run.format;
         substitutes.push_back(run.format);
         substitutes.back().font = best;
         return &substitutes.back();
