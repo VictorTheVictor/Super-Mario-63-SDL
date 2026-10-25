@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <unordered_map>
 
 #include "flash/Effects.h"
 #include "flash/Morph.h"
@@ -129,6 +130,19 @@ IntRect layerArea(const DisplayObject& o, const Matrix& m, int pad, const IntRec
 // Renders the object's content without its color transform into a layer covering `area`
 // and filters it. With `parallel`, the content is drawn in row strips and the filters in
 // chunks spread over its threads.
+void collectCachedLayers(DisplayObject& o, const Matrix& parentMatrix,
+                         std::vector<std::pair<DisplayObject*, Matrix>>& out);
+
+// Filtered layers nested in the layer being drawn in strips, built once by renderLayer
+// (see renderSettings.shareNestedLayers) for renderDisplayObject to composite.
+struct PreparedLayer {
+    const Surface* target = nullptr;  // the layer they draw into
+    Matrix m;                         // the matrix they were built with
+    Surface pixels;
+    int x0 = 0, y0 = 0;
+};
+const std::unordered_map<const DisplayObject*, PreparedLayer>* preparedLayers = nullptr;
+
 void renderLayer(DisplayObject& o, const Matrix& m, const IntRect& area, const std::vector<Filter>& filters,
                  Surface& layer, Rasterizer& r, const Movie& movie, const ParallelRender* parallel) {
     layer.resize(area.x1 - area.x0, area.y1 - area.y0);
@@ -138,11 +152,35 @@ void renderLayer(DisplayObject& o, const Matrix& m, const IntRect& area, const s
         applyFilters(layer, filters);
         return;
     }
+    // Nested filtered layers, each built (in parallel, and recursively) over all of this
+    // layer instead of once per strip.
+    std::unordered_map<const DisplayObject*, PreparedLayer> prepared;
+    if (renderSettings.shareNestedLayers) {
+        std::vector<std::pair<DisplayObject*, Matrix>> nested;
+        int maskedUntil = -1;
+        o.forEachChild([&](DisplayObject& c) {
+            if (c.clipDepth) maskedUntil = c.clipDepth;  // masks draw into mask layers
+            else if (c.depth > maskedUntil) collectCachedLayers(c, lm, nested);
+        });
+        for (auto& [n, nm] : nested) {
+            PreparedLayer& p = prepared[n];
+            p.target = &layer;
+            p.m = nm;
+            std::vector<Filter> nf = deviceFilters(*n);
+            IntRect na = layerArea(*n, nm, filterPadding(nf), {0, 0, layer.width, layer.height});
+            p.x0 = na.x0;
+            p.y0 = na.y0;
+            if (!na.empty()) renderLayer(*n, nm, na, nf, p.pixels, r, movie, parallel);
+        }
+    }
+    auto* outer = preparedLayers;
+    preparedLayers = &prepared;
     int strips = std::max(1, std::min(64, layer.height / 16));
     (*parallel)(strips, [&](int i, Rasterizer& pr) {
         IntRect strip{0, layer.height * i / strips, layer.width, layer.height * (i + 1) / strips};
         o.render(pr, layer, strip, lm, ColorTransform{}, movie);
     });
+    preparedLayers = outer;
     applyFilters(layer, filters, [&](int n, const std::function<void(int)>& fn) {
         (*parallel)(n, [&](int i, Rasterizer&) { fn(i); });
     });
@@ -157,7 +195,7 @@ LayerCache::Layer& currentLayer(LayerCache& cache, DisplayObject& o, const Matri
     if (cached.ready) return cached;
     RenderHash h;
     o.hashForRender(h, false);  // its own matrix is part of `m`
-    h.add((uint64_t)renderSettings.crispBitmaps);
+    h.add((uint64_t)renderSettings.crispBitmaps << 1 | renderSettings.shareNestedLayers);
     bool same = cached.valid && cached.hash == h.h && cached.targetWidth == target.width &&
                 cached.targetHeight == target.height && cached.m.a == m.a && cached.m.b == m.b &&
                 cached.m.c == m.c && cached.m.d == m.d && cached.m.tx == m.tx && cached.m.ty == m.ty;
@@ -314,6 +352,16 @@ void renderDisplayObject(DisplayObject& o, Rasterizer& r, Surface& dst, const In
         LayerCache::Layer& cached = currentLayer(*cache, o, m, dst, r, movie, nullptr);
         if (cached.pixels.width) compositeLayer(dst, clip, cached.pixels, cached.x0, cached.y0, mode, cx);
         return;
+    }
+    if (preparedLayers) {
+        auto it = preparedLayers->find(&o);
+        const Matrix& pm = it != preparedLayers->end() ? it->second.m : m;
+        if (it != preparedLayers->end() && it->second.target == &dst && pm.a == m.a && pm.b == m.b && pm.c == m.c &&
+            pm.d == m.d && pm.tx == m.tx && pm.ty == m.ty) {
+            const PreparedLayer& p = it->second;
+            if (p.pixels.width) compositeLayer(dst, clip, p.pixels, p.x0, p.y0, mode, cx);
+            return;
+        }
     }
     std::vector<Filter> filters = deviceFilters(o);
     IntRect area = layerArea(o, m, filterPadding(filters), clip);
