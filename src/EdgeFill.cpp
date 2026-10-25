@@ -1,6 +1,7 @@
 #include "EdgeFill.h"
 
 #include <cmath>
+#include <regex>
 
 #include "as/Player.h"
 #include "as/Stage.h"
@@ -145,11 +146,10 @@ std::shared_ptr<DisplayObject> makeHolder(MovieClip& course, int depth, const st
     return holder;
 }
 
-// Castle rooms and other indoor courses (in Bowser's castle, the Bowser trap) end in walls,
-// not open ground: they get no fill. Known by name and by their far background.
-bool indoor(const std::string& course, const std::string& farBackground) {
-    return course.rfind("C-", 0) == 0 || course.rfind("Castle", 0) == 0 || farBackground == "CastleColoredFarBG" ||
-           farBackground == "BowsersTrap1BG" || farBackground == "C-13FarBG" || farBackground == "Black-BG";
+// The castle's rooms (C-...) end in walls, not open ground: they get no fill. Its grounds
+// ("Castle", outside it, and C-O, the backyard) do.
+bool insideCastle(const std::string& course) {
+    return course.rfind("C-", 0) == 0 && course != "C-O";
 }
 
 }  // namespace
@@ -165,12 +165,14 @@ void EdgeFill::update(as::Player& player, bool visible) {
             pendingTicks_ = 0;
             holders_.clear();
             clipped_.clear();
+            deadLeft_.reset();
+            deadRight_.reset();
+            part_.reset();
         }
         if (++pendingTicks_ >= 4) {
             as::Value root = as::valueOf(&player.root());
             std::string name = as::getMember(root, as::intern("playingcourse")).toString();
-            std::string far = as::getMember(root, as::intern(name + "FarBackground")).toString();
-            if (indoor(name, far)) course_ = course->weak_from_this();
+            if (insideCastle(name)) course_ = course->weak_from_this();
             else build(*course);
         }
     }
@@ -217,13 +219,30 @@ void EdgeFill::build(MovieClip& course) {
     if (ground.empty()) return;
     auto [left, right] = xExtent(ground);
     MovieClip* part = terrainInBack || !front ? back : front;
-    // The original terrain is cut a tile before each end (its rounded end cap), where the
-    // first repeated slice lies.
-    for (const Placed& p : ground)
-        if (p.live)
-            clipped_.push_back({p.live->weak_from_this(), Rect{(left + kEndCap) * 20, -1e9, (right - kEndCap) * 20, 1e9}});
+    if (!part) return;
+    part_ = part->weak_from_this();
+    // An end leads on when a warp box (hidden clips named warp1, warp2, ... in BackGFX)
+    // sits at it: the ground there is extended. Elsewhere the level just stops: that end is
+    // left as it is, and the window's view pans no further than it (deadEnd).
+    static const std::regex warpName("warp\\d+");
+    auto leadsOn = [&](bool atRight) {
+        bool found = false;
+        if (back)
+            back->forEachChild([&](DisplayObject& c) {
+                if (!std::regex_match(c.name, warpName)) return;
+                Rect box = c.matrix.apply(c.localBounds());
+                double x0 = box.xMin / 20, x1 = box.xMax / 20, mid = (x0 + x1) / 2;
+                if (atRight ? x1 >= right - 40 && mid > right - 300 : x0 <= left + 40 && mid < left + 300) found = true;
+            });
+        return found;
+    };
+    Rect keep{-1e9, -1e9, 1e9, 1e9};  // where the level's own terrain stays drawn
     for (bool atRight : {true, false}) {
         double end = atRight ? right : left;
+        if (!leadsOn(atRight)) {
+            (atRight ? deadRight_ : deadLeft_) = end;
+            continue;
+        }
         // The shapes crossing the slice next to this end. Below BackGFX, so whatever the
         // level itself draws beyond an end stays in front.
         double s0 = atRight ? end - kEndCap - kSlice : end + kEndCap, s1 = s0 + kSlice;
@@ -232,9 +251,24 @@ void EdgeFill::build(MovieClip& course) {
             auto [x0, x1] = drawnExtent(p);
             if (x1 > s0 && x0 < s1) slice.push_back(p);
         }
-        if (slice.empty() || !part) continue;
+        if (slice.empty()) continue;
         if (auto holder = makeHolder(course, 16384 - 100 + atRight, std::string("PortEdge_") + (atRight ? "right" : "left"),
                                      atRight, end, slice))
             holders_.push_back({holder, part->weak_from_this()});
+        // The original terrain is cut a tile before this end (its rounded end cap), where
+        // the first repeated slice lies.
+        (atRight ? keep.xMax : keep.xMin) = (atRight ? end - kEndCap : end + kEndCap) * 20;
     }
+    for (const Placed& p : ground)
+        if (p.live) clipped_.push_back({p.live->weak_from_this(), keep});
+}
+
+std::optional<double> EdgeFill::deadEnd(bool right, Matrix& toStage) const {
+    auto part = part_.lock();
+    std::optional<double> end = right ? deadRight_ : deadLeft_;
+    if (!part || !end || !part->parent()) return std::nullopt;
+    // The part as it is drawn this frame (between ticks too).
+    Matrix m = part->drawMatrix();
+    toStage = part->parent()->worldMatrix() * m;
+    return end;
 }

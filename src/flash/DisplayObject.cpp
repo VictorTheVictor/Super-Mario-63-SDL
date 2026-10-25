@@ -221,6 +221,7 @@ LayerCache::Layer& currentLayer(LayerCache& cache, DisplayObject& o, const Matri
 }
 
 bool usesCachedLayer(const DisplayObject& o) {
+    if (o.cacheAsLayer) return true;
     for (const Filter& f : o.filters)
         if (f.type != Filter::ColorMatrix && f.type != Filter::Convolution) return true;  // pads its layer
     return false;
@@ -289,7 +290,7 @@ void numberForOcclusion(DisplayObject& o, const Matrix& parentMatrix, const Colo
     o.orderStamp = orderStamp;
     o.orderBegin = ++counter;
     bool drawn = o.visible && !renderSettings.isHidden(&o);
-    direct = direct && drawn && o.filters.empty() && o.blendMode < BlendLayer;
+    direct = direct && drawn && o.filters.empty() && o.blendMode < BlendLayer && !o.cacheAsLayer;
     Matrix m = parentMatrix * o.drawMatrix();
     ColorTransform cx = parentCx * o.cxform;
     if (direct && cx.aMul == 1 && cx.aAdd == 0 && dynamic_cast<ShapeObject*>(&o)) {
@@ -343,7 +344,7 @@ void renderDisplayObject(DisplayObject& o, Rasterizer& r, Surface& dst, const In
     }
     Matrix m = parentMatrix * o.drawMatrix();
     ColorTransform cx = parentCx * o.cxform;
-    bool needsLayer = !o.filters.empty() || o.blendMode >= BlendLayer;
+    bool needsLayer = !o.filters.empty() || o.blendMode >= BlendLayer || o.cacheAsLayer;
     if (!needsLayer) {
         o.render(r, dst, clip, m, cx, movie);
         return;
@@ -386,7 +387,7 @@ void collectCachedLayers(DisplayObject& o, const Matrix& parentMatrix,
                          std::vector<std::pair<DisplayObject*, Matrix>>& out) {
     if (!o.visible || renderSettings.isHidden(&o)) return;
     Matrix m = parentMatrix * o.drawMatrix();
-    if (!o.filters.empty() || o.blendMode >= BlendLayer) {
+    if (!o.filters.empty() || o.blendMode >= BlendLayer || o.cacheAsLayer) {
         if (usesCachedLayer(o)) out.push_back({&o, m});
         return;  // its children draw into its layer
     }

@@ -760,6 +760,8 @@ int main(int argc, char** argv) {
                                             "sky extended by a mirrored copy on the right, centered",
                                             "sky zoomed to fill", "sky stretched to fill", "sky as is, black beyond"};
     int viewMode = Letterbox;
+    // Ground beyond the level's ends when the window shows past the stage (see EdgeFill).
+    EdgeFill edgeFill;
     // Objects shown differently from where the game put them (displayTransform): HUD
     // pieces at the window's edges, the screen filter stretched over the whole window.
     std::vector<std::weak_ptr<flash::DisplayObject>> adjusted;
@@ -769,11 +771,40 @@ int main(int argc, char** argv) {
         player->backdrop = nullptr;
         player->backdropPlacements.clear();
         for (auto& w : adjusted)
-            if (auto d = w.lock()) d->displayTransform = {};
+            if (auto d = w.lock()) d->displayTransform = {}, d->cacheAsLayer = false;
         adjusted.clear();
         player->blackBeyondStage = false;
         player->backgroundColor.reset();
         if (viewMode == Letterbox || viewScale <= 0) return;
+        // The window in stage pixels.
+        double wx0 = -viewX / viewScale, wy0 = -viewY / viewScale;
+        double ww = surf.width / viewScale, wh = surf.height / viewScale;
+        // A level end that leads nowhere is never shown with empty space past it: the view
+        // pans (the level and its parallax backgrounds shift, the HUD stays) until that end
+        // is at the window's edge. Positions as drawn this frame, between ticks too.
+        {
+            double pan = 0;
+            int ends = 0;
+            flash::Matrix toStage;
+            flash::renderSettings.interpolation = interpolation;
+            if (auto end = edgeFill.deadEnd(false, toStage)) {
+                double x = toStage.apply(flash::Point{*end * 20, 0}).x / 20;
+                if (x > wx0) pan += wx0 - x, ends++;
+            }
+            if (auto end = edgeFill.deadEnd(true, toStage)) {
+                double x = toStage.apply(flash::Point{*end * 20, 0}).x / 20;
+                if (x < wx0 + ww) pan += wx0 + ww - x, ends++;
+            }
+            flash::renderSettings.interpolation = 1;
+            if (ends) pan /= ends;  // both ends in view: center the level
+            if (pan != 0)
+                for (auto [path, factor] : {std::pair{"_root.Course", 1.0}, {"_root.BGCloseCourse", 0.5},
+                                            {"_root.MidBackground", 0.2}, {"_root.BGCourse", 0.1}})
+                    if (auto* layer = as::resolvePath(&player->root(), path)) {
+                        layer->displayTransform = flash::Matrix::translate(pan * factor * 20, 0);
+                        adjusted.push_back(layer->weak_from_this());
+                    }
+        }
         // Menus whose background is a stage-sized opaque shape on the main timeline (the
         // course select's white page): its color fills the rest of the window.
         player->root().forEachChild([&](flash::DisplayObject& c) {
@@ -787,14 +818,22 @@ int main(int argc, char** argv) {
                     return;
                 }
         });
-        // Door and course transitions in a level (the star wipe and others) cover only the
-        // stage: show them letterboxed. (Menus' fades, like the star select's, aren't: the
-        // menu's background fills the window.)
+        // Transitions in a level: the wipes (the star, and the sliding ones between course
+        // parts) cover only the stage, so they are shown letterboxed; plain fades (to and
+        // from white or black) stretch over the window instead. (Menus' fades, like the star
+        // select's, aren't letterboxed: the menu's background fills the window.)
         auto* transition = as::resolvePath(&player->root(), "_root.Transition");
-        player->blackBeyondStage = transition && transition->visible && as::resolvePath(&player->root(), "_root.Course");
-        // The window in stage pixels.
-        double wx0 = -viewX / viewScale, wy0 = -viewY / viewScale;
-        double ww = surf.width / viewScale, wh = surf.height / viewScale;
+        if (transition && transition->visible && transition->definition()) {
+            const std::string& kind = transition->definition()->exportName;
+            if (kind == "Fromwhite" || kind == "Whiteout" || kind == "Blackout" || kind == "TitleScreenTransition") {
+                flash::Matrix parent = transition->parent() ? transition->parent()->worldMatrix() : flash::Matrix{};
+                flash::Matrix toWindow = flash::Matrix::translate(wx0 * 20, wy0 * 20) * flash::Matrix::scale(ww / W, wh / H);
+                transition->displayTransform = parent.inverse() * toWindow * parent;
+                adjusted.push_back(transition->weak_from_this());
+            } else if (as::resolvePath(&player->root(), "_root.Course")) {
+                player->blackBeyondStage = true;
+            }
+        }
         if (auto* stats = dynamic_cast<MovieClip*>(as::resolvePath(&player->root(), "_root.Stats")))
             stats->forEachChild([&](flash::DisplayObject& c) {
                 int id = c.definition() ? c.definition()->id : 0;
@@ -834,6 +873,9 @@ int main(int argc, char** argv) {
                     if (!content.definition() || content.definition()->id != 794) return;
                     content.forEachChild([&](flash::DisplayObject& c) {
                         if (c.definition() && c.definition()->id == 629) {
+                            // Five overlapping gradients over the whole window: drawn once and
+                            // reused while the menu is open.
+                            c.cacheAsLayer = true;
                             adjust(c, flash::Matrix::translate(wx0 * 20, wy0 * 20) * flash::Matrix::scale(ww / W, wh / H));
                             return;
                         }
@@ -909,7 +951,7 @@ int main(int argc, char** argv) {
     // every tick against everything else (spikes, lava).
     bool noclip = false;
     double noclipX = 0, noclipY = 0, noclipVX = 0, noclipVY = 0;
-    as::Value invincibleBeforeNoclip;
+    as::Value invincibleBeforeNoclip, powerTimerBeforeNoclip;
     // Directions currently held on a game controller (D-pad or left stick).
     bool padLeft = false, padRight = false, padUp = false, padDown = false;
     auto charValue = [&]() -> as::Value {
@@ -925,6 +967,9 @@ int main(int argc, char** argv) {
         as::setMember(c, as::intern("yspeed"), 0);
         as::Value root = as::valueOf(&player->root());
         as::setMember(root, as::intern("Invincible"), true);
+        // The game counts a power-up's PowerTimer down while Invincible (or another power-up)
+        // is set and, at zero, ends it and restarts the level music: keep it from running out.
+        if (as::getMember(root, as::intern("PowerTimer")).toNumber() < 1000) as::setMember(root, as::intern("PowerTimer"), 1000);
         as::Value full = as::getMember(root, as::intern("TotalPower"));
         if (full.isNumber()) as::setMember(root, as::intern("Power"), full);
     };
@@ -976,8 +1021,6 @@ int main(int argc, char** argv) {
         }
     };
 
-    // Ground beyond the level's ends when the window shows past the stage (see EdgeFill).
-    EdgeFill edgeFill;
     auto tick = [&]() {
         if (!player) {
             symbolStage->advance();
@@ -1535,8 +1578,13 @@ int main(int argc, char** argv) {
                         if (e.key.keysym.sym == SDLK_F2 && !e.key.repeat) {
                             noclip = !noclip;
                             as::Value root = as::valueOf(&player->root());
-                            if (noclip) invincibleBeforeNoclip = as::getMember(root, as::intern("Invincible"));
-                            else as::setMember(root, as::intern("Invincible"), invincibleBeforeNoclip);
+                            if (noclip) {
+                                invincibleBeforeNoclip = as::getMember(root, as::intern("Invincible"));
+                                powerTimerBeforeNoclip = as::getMember(root, as::intern("PowerTimer"));
+                            } else {
+                                as::setMember(root, as::intern("Invincible"), invincibleBeforeNoclip);
+                                as::setMember(root, as::intern("PowerTimer"), powerTimerBeforeNoclip);
+                            }
                             as::Value c = charValue();
                             if (c.isObject()) {
                                 noclipX = as::getMember(c, as::intern("_x")).toNumber();

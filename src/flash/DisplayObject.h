@@ -85,6 +85,9 @@ public:
     // object when drawing it and picking it with the mouse, without scripts seeing the
     // difference (e.g. HUD pinned to the window edge).
     Matrix displayTransform;
+    // Port presentation: drawn once into a cached layer and reused while it doesn't change,
+    // like a filtered object (for big, costly, static art such as a stretched menu panel).
+    bool cacheAsLayer = false;
     // Port presentation: when set, the object is drawn only inside this rectangle (parent
     // space, twips), e.g. terrain cut short where the window-filling ground takes over.
     std::optional<Rect> displayClip;

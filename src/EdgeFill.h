@@ -9,9 +9,12 @@
 // repetition starts. Only terrain shapes repeat: not background art, objects (trees,
 // coins, signs are clips) or small shapes (arrow signs, posts). The copies sit below
 // BackGFX, so whatever the level itself draws beyond an end stays in front, and follow
-// their part's position and color transform. Castle and other indoor courses get none.
+// their part's position and color transform. Only ends with a way on (a warp) are
+// extended; at a dead end the window's view pans no further than the end instead (see
+// deadEnd). The castle's rooms get none.
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -31,6 +34,9 @@ public:
     // After each tick: builds the fills when a course part has started, and shows them
     // only when `visible` (the window shows beyond the stage).
     void update(as::Player& player, bool visible);
+    // An end of the current level that leads nowhere (no warp there): its x (level-local
+    // pixels), with the matrix from level-local twips to the stage as drawn this frame.
+    std::optional<double> deadEnd(bool right, flash::Matrix& toStage) const;
 
 private:
     void build(flash::MovieClip& course);
@@ -44,4 +50,6 @@ private:
     std::vector<Holder> holders_;
     // The course's terrain shapes and the rectangle (parent space) they're cut to.
     std::vector<std::pair<std::weak_ptr<flash::DisplayObject>, flash::Rect>> clipped_;
+    std::weak_ptr<flash::DisplayObject> part_;     // the terrain's course part
+    std::optional<double> deadLeft_, deadRight_;   // ends that lead nowhere
 };

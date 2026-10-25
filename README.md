@@ -102,8 +102,10 @@ the HUD's counters, hint line and quality box to the window's edges, stretch the
 dark overlay (the castle before enough stars) over the whole window, show door and
 course transitions letterboxed, fill menus with their own background color (the course
 select's white page), and continue the ground past a level's left and right ends by
-repeating a slice of the terrain next to each end (the ground only, not trees, signs or
-other objects; not in the castle or other indoor courses; see src/EdgeFill.h). The game's
+repeating a slice of the terrain next to each end that leads on (the ground only, not
+trees, signs or other objects; not in the castle's rooms; see src/EdgeFill.h); at an end
+that leads nowhere the view pans no further than the end instead. Fades (to and from white
+or black) cover the window; the wipes in a level stay letterboxed. The game's
 pause menu's white panel covers the window and its counters move to the edges too. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off: draw as fast as possible, to measure rendering), F8 toggles building
 nested filter layers once (on by default; off draws them per strip as before, slower, and can
 differ by 1/255 in a few pixels), F6 toggles
