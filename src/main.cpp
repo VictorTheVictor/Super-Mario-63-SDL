@@ -875,6 +875,54 @@ int main(int argc, char** argv) {
         as::Value full = as::getMember(root, as::intern("TotalPower"));
         if (full.isNumber()) as::setMember(root, as::intern("Power"), full);
     };
+    // The options screen's row of buttons: next to the game's Quality button, "Controls" and
+    // "Advanced" placeholders (do nothing yet). They are copies of the Quality button
+    // (sprite 9496: animated background, hover growth and bobbing) without its "QUALITY"
+    // artwork, in a holder clip placed like the Quality clip (sprite 9516) while it is on
+    // the menu (_root.m). The copies' own click handler, which would switch the menu to
+    // the quality choices, is removed as soon as their script installs it.
+    auto updateOptionsRow = [&]() {
+        auto* menu = dynamic_cast<MovieClip*>(as::resolvePath(&player->root(), "_root.m"));
+        if (!menu) return;
+        flash::DisplayObject* quality = nullptr;
+        flash::DisplayObject* holder = nullptr;
+        menu->forEachChild([&](flash::DisplayObject& c) {
+            if (c.definition() && c.definition()->id == 9516) quality = &c;
+            if (c.name == "PortOptionsRow") holder = &c;
+        });
+        if (!quality) {
+            if (holder) as::callFunction(as::getMember(as::valueOf(holder), as::intern("removeMovieClip")), as::valueOf(holder), {});
+            return;
+        }
+        if (!holder) {
+            auto* bg = movie.character(9496);
+            if (!bg) return;
+            auto row = menu->createEmpty(500 + as::kDepthOffset, "PortOptionsRow");
+            auto* rowClip = dynamic_cast<MovieClip*>(row.get());
+            if (!rowClip) return;
+            row->matrix = quality->matrix;
+            // The Quality button sits at (58, 72.3) in the Quality clip; the new ones go a
+            // button width and a gap to each side.
+            for (auto [name, dx] : {std::pair{"Controls", -140.0}, {"Advanced", 140.0}}) {
+                auto button = rowClip->attach(bg, (dx < 0 ? 1 : 2) - 16384, name);
+                if (!button) continue;
+                button->matrix = flash::Matrix::translate((58 + dx) * 20, 72.3 * 20);
+                // Its frame 1 script (which stops it there) runs on the next tick, after the
+                // timeline would already have moved on to frame 2 (its faded-out state).
+                if (auto* clip = dynamic_cast<MovieClip*>(button.get())) clip->playing = false;
+            }
+            holder = row.get();
+        }
+        for (const char* name : {"Controls", "Advanced"}) {
+            as::Value button = as::getMember(as::valueOf(holder), as::intern(name));
+            if (!button.isObject()) continue;
+            as::Value txt = as::getMember(button, as::intern("txt"));
+            if (txt.isObject()) as::setMember(txt, as::intern("_visible"), false);
+            if (!as::getMember(button, as::intern("onMouseDown")).isUndefined())
+                as::setMember(button, as::intern("onMouseDown"), as::Value());
+        }
+    };
+
     auto tick = [&]() {
         if (!player) {
             symbolStage->advance();
@@ -889,6 +937,7 @@ int main(int argc, char** argv) {
         }
         player->tick();
         if (noclip) pinChar();
+        updateOptionsRow();
     };
 
     // Pausing is the game's own pause menu ("Pause New", sprite 795, an unnamed clip in

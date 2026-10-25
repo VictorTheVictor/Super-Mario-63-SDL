@@ -79,7 +79,9 @@ the SWF onto the executable passes it as the path too.
 Symbol viewer keys: Space play/pause, Left/Right step a frame, Escape quit.
 Game mode: input goes to the game; Shift+Escape quits. P opens the game's own pause menu
 (Star Map, Options, FLUDD, Exit to leave a level), and so do Escape and a controller's
-Start button; the sound playing when it opens is held until it closes. F11 toggles fullscreen. F5 cycles
+Start button; the sound playing when it opens is held until it closes. The options screen
+has two placeholder buttons beside Quality (Controls and Advanced, unlabeled for now; they
+do nothing yet). F11 toggles fullscreen. F5 cycles
 how the window is filled:
 
 1. letterboxed (only the stage, black bars);
