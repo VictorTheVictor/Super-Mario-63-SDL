@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <regex>
 #include <set>
 #include <vector>
 #include <string>
@@ -589,7 +590,7 @@ int main(int argc, char** argv) {
     int scale = 2, frames = 0, sampleEvery = 0, benchFrom = 0;
     double renderScale = 1;  // headless output size, in multiples of the stage size
     int windowW = 0, windowH = 0;  // headless: --window WxH
-    bool letterboxOption = false;
+    bool letterboxOption = false, lockZoomOption = false;
     int renderThreads = 0;   // 0: one per hardware thread
     bool noLayerCache = false, noOcclusion = false;
     bool noInterpolation = false;  // --no-smooth-motion: draw only at game ticks
@@ -609,6 +610,7 @@ int main(int argc, char** argv) {
         else if (a == "--deterministic") as::setDeterministic(63);
         else if (a == "--no-layer-cache") noLayerCache = true;
         else if (a == "--letterbox") letterboxOption = true;
+        else if (a == "--lock-zoom") lockZoomOption = true;
         else if (a == "--no-occlusion") noOcclusion = true;
         else if (a == "--no-smooth-motion") noInterpolation = true;
         else if (a == "--debug-overlay") debugOverlay = true;
@@ -847,21 +849,29 @@ int main(int argc, char** argv) {
                 player->blackBeyond = flash::Rect{wx0 * 20, wy0 * 20, (wx0 + ww) * 20, (wy0 + wh) * 20};
             }
         }
-        // Transitions in a level: the wipes (the star, and the sliding ones between course
-        // parts) cover only the stage, so they are shown letterboxed; plain fades (to and
-        // from white or black) stretch over the window instead.
-        auto* transition = as::resolvePath(&player->root(), "_root.Transition");
-        if (transition && transition->visible && transition->definition()) {
-            const std::string& kind = transition->definition()->exportName;
+        // Transitions in a level (clips on the main timeline): plain fades (to and from
+        // white or black) stretch over the window; the wipes (the star, and the sliding ones
+        // into and out of course parts: _root.Transition and the "lefttransition<n>" clips)
+        // are scaled evenly from the stage's center until they cover the window, so their
+        // curves keep their shape.
+        static const std::regex wipeName("StarIn|(left|right|up|down)transition2?");
+        player->root().forEachChild([&](flash::DisplayObject& t) {
+            if (!t.visible || !t.definition()) return;
+            const std::string& kind = t.definition()->exportName;
+            flash::Matrix toWindow;
             if (kind == "Fromwhite" || kind == "Whiteout" || kind == "Blackout" || kind == "TitleScreenTransition") {
-                flash::Matrix parent = transition->parent() ? transition->parent()->worldMatrix() : flash::Matrix{};
-                flash::Matrix toWindow = flash::Matrix::translate(wx0 * 20, wy0 * 20) * flash::Matrix::scale(ww / W, wh / H);
-                transition->displayTransform = parent.inverse() * toWindow * parent;
-                adjusted.push_back(transition->weak_from_this());
+                toWindow = flash::Matrix::translate(wx0 * 20, wy0 * 20) * flash::Matrix::scale(ww / W, wh / H);
+            } else if (std::regex_match(kind, wipeName)) {
+                double k = std::max(ww / W, wh / H);
+                toWindow = flash::Matrix::translate((wx0 + ww / 2) * 20, (wy0 + wh / 2) * 20) * flash::Matrix::scale(k, k) *
+                           flash::Matrix::translate(-W * 10.0, -H * 10.0);
             } else {
-                player->blackBeyond = flash::Rect{0, 0, W * 20.0, H * 20.0};
+                return;
             }
-        }
+            flash::Matrix parent = t.parent() ? t.parent()->worldMatrix() : flash::Matrix{};
+            t.displayTransform = parent.inverse() * toWindow * parent;
+            adjusted.push_back(t.weak_from_this());
+        });
         if (auto* stats = dynamic_cast<MovieClip*>(as::resolvePath(&player->root(), "_root.Stats")))
             stats->forEachChild([&](flash::DisplayObject& c) {
                 int id = c.definition() ? c.definition()->id : 0;
@@ -901,6 +911,11 @@ int main(int argc, char** argv) {
                 pause.forEachChild([&](flash::DisplayObject& content) {
                     if (!content.definition() || content.definition()->id != 794) return;
                     content.forEachChild([&](flash::DisplayObject& c) {
+                        // The dark fade between its pages ("trans", sprite 661) too.
+                        if (c.definition() && c.definition()->id == 661) {
+                            adjust(c, flash::Matrix::translate(wx0 * 20, wy0 * 20) * flash::Matrix::scale(ww / W, wh / H));
+                            return;
+                        }
                         flash::Rect pb = c.matrix.apply(c.localBounds());
                         if (dynamic_cast<flash::ShapeObject*>(&c) && pb.xMax - pb.xMin >= (W - 2) * 20 &&
                             pb.yMax - pb.yMin >= (H - 2) * 20) {
@@ -1039,6 +1054,14 @@ int main(int argc, char** argv) {
     // The controller's menu cursor (see MenuCursor).
     MenuCursor menuCursor;
     std::map<int, int> keyPulses;  // keys pressed for the controller: ticks until released
+    // F10: levels can't zoom the camera (their scripts set _root.CameraZoom, e.g. 250 for a
+    // boss); it stays where the player's own zoom keys (+/-, the right stick) put it.
+    bool zoomLock = lockZoomOption;
+    double lockedZoom = 100;
+    auto holdZoom = [&]() {
+        if (!zoomLock || !inLevel(*player)) return;
+        as::setMember(as::valueOf(&player->root()), as::intern("CameraZoom"), lockedZoom);
+    };
     auto tick = [&]() {
         if (!player) {
             symbolStage->advance();
@@ -1058,7 +1081,17 @@ int main(int argc, char** argv) {
             noclipY += noclipVY;
             pinChar();
         }
+        holdZoom();
         player->tick();
+        if (zoomLock && inLevel(*player)) {
+            // The player's zoom this tick, as the game's own key check does it.
+            as::Value root = as::valueOf(&player->root());
+            auto pressed = [&](const char* fn) {
+                return as::callFunction(as::getMember(root, as::intern(fn)), root, {}).toBoolean();
+            };
+            lockedZoom = std::clamp(lockedZoom + 2 * (pressed("KeyPlus") - pressed("KeyMinus")), 50.0, 200.0);
+            holdZoom();
+        }
         menuCursor.afterTick(*player);
         for (auto it = keyPulses.begin(); it != keyPulses.end();)
             if (--it->second <= 0) player->keyUp(it->first), it = keyPulses.erase(it);
@@ -1474,6 +1507,24 @@ int main(int argc, char** argv) {
         as::setMember(clip, as::intern("num"), num);
         return true;
     };
+    // The pause menu's Star Map (stars, or star coins) scrolls with the right stick too: its
+    // arrows (sprite 669) move the map clip `sm` in the menu content (sprite 794).
+    auto scrollStarMap = [&](double dy) {  // stage pixels; positive shows earlier courses
+        flash::DisplayObject* content = nullptr;
+        if (auto* stats = as::resolvePath(&player->root(), "_root.Stats"))
+            stats->forEachChild([&](flash::DisplayObject& pause) {
+                if (pause.definition() && pause.definition()->id == 795)
+                    pause.forEachChild([&](flash::DisplayObject& c) {
+                        if (c.definition() && c.definition()->id == 794) content = &c;
+                    });
+            });
+        if (!content) return;
+        as::Value sm = as::getMember(as::valueOf(content), as::intern("sm"));
+        if (!sm.isObject()) return;
+        double height = as::getMember(sm, as::intern("_height")).toNumber();
+        double y = as::getMember(sm, as::intern("_y")).toNumber() + dy;
+        as::setMember(sm, as::intern("_y"), std::clamp(y, std::min(0.0, -height + 100), 0.0));
+    };
     Uint32 lastPadPoll = SDL_GetTicks();
     auto updatePad = [&]() {
         std::set<int> held;
@@ -1502,10 +1553,13 @@ int main(int argc, char** argv) {
             if (button(SDL_CONTROLLER_BUTTON_START)) held.insert('P'), menuHeld |= PadStart;  // the game's pause menu
             // Right stick up/down zooms the camera in/out (the game's + and - keys).
             double ry = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_RIGHTY) / 32767.0;
-            if (ry < -0.5) held.insert(187);
-            if (ry > 0.5) held.insert(189);
-            // In the credits it scrolls them instead: up shows earlier lines.
+            bool paused = mixer.paused();
+            if (ry < -0.5 && !paused) held.insert(187);
+            if (ry > 0.5 && !paused) held.insert(189);
+            // In the credits and the pause menu's Star Map it scrolls them instead: up shows
+            // earlier lines.
             if (std::fabs(ry) > 0.2 && !inLevel(*player)) scrollCredits(-ry * 500 * std::min(padDt, 0.1));
+            if (std::fabs(ry) > 0.2 && paused) scrollStarMap(-ry * 250 * std::min(padDt, 0.1));
         }
         menuHeld |= (padLeft ? PadLeft : 0) | (padRight ? PadRight : 0) | (padUp ? PadUp : 0) | (padDown ? PadDown : 0);
         if (padMenu(menuHeld, (double)SDL_GetTicks())) {
@@ -1653,6 +1707,12 @@ int main(int argc, char** argv) {
                             std::snprintf(path, sizeof path, "sm63-dump-%d.bmp", dumps);
                             saveBmp(surf, path);
                             std::printf("wrote sm63-dump-%d.txt and .bmp\n", dumps);
+                            break;
+                        }
+                        if (e.key.keysym.sym == SDLK_F10 && !e.key.repeat) {
+                            zoomLock = !zoomLock;
+                            lockedZoom = 100;
+                            std::printf("level zoom %s\n", zoomLock ? "locked (only +/- zoom)" : "unlocked");
                             break;
                         }
                         if (e.key.keysym.sym == SDLK_F5 && !e.key.repeat) {

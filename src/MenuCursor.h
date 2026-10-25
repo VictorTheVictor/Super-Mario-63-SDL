@@ -45,6 +45,7 @@ public:
 
 private:
     void hover(as::Player& player, const Target& t);
+    const Target* first() const;  // where a new selection starts
     void click(as::Player& player, const Target& t);
 
     std::vector<Target> targets_;
@@ -56,4 +57,13 @@ private:
     // game's buttons notice the mouse over them in their frame scripts first) and comes
     // up the tick after.
     int pressIn_ = 0, releaseIn_ = 0;  // ticks until the mouse button goes down / up
+    // Buttons clicked to get where the menu is (most recent last); after B, the cursor
+    // returns to the latest one that shows up again within a few seconds.
+    struct Visit {
+        std::weak_ptr<flash::DisplayObject> obj;
+        flash::Point point;
+        std::string label;
+    };
+    std::vector<Visit> visits_;
+    int returnFor_ = 0;  // ticks left to find it after B
 };

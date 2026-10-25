@@ -228,6 +228,23 @@ void MenuCursor::afterTick(as::Player& player) {
                 nearest = &t;
         hover(player, *nearest);
     }
+    // After B: back on the button that led to the menu that was left.
+    if (returnFor_ > 0) {
+        returnFor_--;
+        for (size_t i = visits_.size(); i-- > 0 && returnFor_ > 0;)
+            for (const Target& t : targets_) {
+                auto o = t.obj.lock();
+                bool same = o && o == visits_[i].obj.lock();
+                // The menu rebuilt it: the same button at the same place.
+                same = same || (t.label == visits_[i].label &&
+                                std::hypot(t.point.x - visits_[i].point.x, t.point.y - visits_[i].point.y) < 30);
+                if (!same) continue;
+                visits_.resize(i);
+                returnFor_ = 0;
+                hover(player, t);
+                break;
+            }
+    }
     // Keep the mouse on the selection as it moves (buttons grow and slide in).
     if (const Target* t = selected()) {
         lastPoint_ = t->point;
@@ -251,19 +268,24 @@ void MenuCursor::click(as::Player& player, const Target& t) {
     hover(player, t);
     clicked_ = true;
     pressIn_ = 1;
+    bool leaving = t.label.find(" back") != std::string::npos || t.label.find(" cancel") != std::string::npos;
+    if (!leaving) {
+        visits_.push_back({t.obj, t.point, t.label});
+        if (visits_.size() > 32) visits_.erase(visits_.begin());
+    }
 }
 
 bool MenuCursor::activate(as::Player& player) {
     if (targets_.empty()) return false;
     const Target* t = selected();
-    click(player, t ? *t : targets_.front());
+    click(player, t ? *t : *first());
     return true;
 }
 
 bool MenuCursor::select(as::Player& player) {
     if (targets_.empty()) return false;
     if (const Target* t = selected()) click(player, *t);
-    else hover(player, targets_.front());
+    else hover(player, *first());
     return true;
 }
 
@@ -271,7 +293,7 @@ bool MenuCursor::move(as::Player& player, int dx, int dy) {
     if (targets_.empty()) return false;
     const Target* from = selected();
     if (!from) {
-        hover(player, targets_.front());
+        hover(player, *first());
         return true;
     }
     // The nearest target in that direction, favoring ones in line with the selection.
@@ -300,5 +322,18 @@ bool MenuCursor::clickLabeled(as::Player& player, const std::vector<std::string>
 }
 
 bool MenuCursor::back(as::Player& player) {
-    return clickLabeled(player, {"cancel", "back", "return", "title screen", "close"});
+    if (!clickLabeled(player, {"cancel", "back", "return", "title screen", "close"})) return false;
+    returnFor_ = 32 * 3;
+    return true;
+}
+
+const MenuCursor::Target* MenuCursor::first() const {
+    // The button nearest the screen's top left corner, not counting the way out.
+    const Target* best = nullptr;
+    for (const Target& t : targets_) {
+        bool leaving = t.label.find(" back") != std::string::npos || t.label.find(" cancel") != std::string::npos;
+        if (leaving) continue;
+        if (!best || std::hypot(t.point.x, t.point.y) < std::hypot(best->point.x, best->point.y)) best = &t;
+    }
+    return best ? best : targets_.empty() ? nullptr : &targets_.front();
 }
