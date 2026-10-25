@@ -125,7 +125,7 @@ B uses FLUDD, X spins, Y ground pounds and talks (Z), the bumpers also press Z. 
 the same keys the game reads from the keyboard (S, C, X, Z and the arrows). The right stick
 zooms the camera: up zooms in, down zooms out (the game's + and - keys); in the credits it
 scrolls them (so does dragging them with the mouse or a finger), and in the pause menu it
-scrolls the Star Map.
+scrolls the Star Map (which also scrolls by dragging it with the mouse or a finger).
 
 Controllers also play every menu (title, main menu, story files, options, extras, level
 designer, course and star select, and the pause menu): the D-pad or left stick moves a

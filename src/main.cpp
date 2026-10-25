@@ -1507,7 +1507,8 @@ int main(int argc, char** argv) {
         as::setMember(clip, as::intern("num"), num);
         return true;
     };
-    // The pause menu's Star Map (stars, or star coins) scrolls with the right stick too: its
+    // The pause menu's Star Map (stars, or star coins) scrolls with the right stick and by
+    // dragging too: its
     // arrows (sprite 669) move the map clip `sm` in the menu content (sprite 794).
     auto scrollStarMap = [&](double dy) {  // stage pixels; positive shows earlier courses
         flash::DisplayObject* content = nullptr;
@@ -1787,11 +1788,15 @@ int main(int argc, char** argv) {
                     }
                     case SDL_MOUSEMOTION: {
                         menuCursor.clear();  // the real mouse takes over from the controller
-                        if ((e.motion.state & SDL_BUTTON_LMASK) && viewScale > 0 && !inLevel(*player)) {
+                        // Dragging (the mouse, or a finger) scrolls the credits and the pause
+                        // menu's Star Map.
+                        if ((e.motion.state & SDL_BUTTON_LMASK) && viewScale > 0) {
                             int ww, wh, ow, oh;
                             SDL_GetWindowSize(win, &ww, &wh);
                             SDL_GetRendererOutputSize(ren, &ow, &oh);
-                            scrollCredits(e.motion.yrel * (double)oh / std::max(1, wh) / viewScale);
+                            double dy = e.motion.yrel * (double)oh / std::max(1, wh) / viewScale;
+                            if (mixer.paused()) scrollStarMap(dy);
+                            else if (!inLevel(*player)) scrollCredits(dy);
                         }
                         double mx = e.motion.x, my = e.motion.y;
                         {
