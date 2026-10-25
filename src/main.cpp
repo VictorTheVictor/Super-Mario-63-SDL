@@ -787,10 +787,11 @@ int main(int argc, char** argv) {
                     return;
                 }
         });
-        // Door and course transitions (the star wipe and others) cover only the stage: show
-        // them letterboxed.
+        // Door and course transitions in a level (the star wipe and others) cover only the
+        // stage: show them letterboxed. (Menus' fades, like the star select's, aren't: the
+        // menu's background fills the window.)
         auto* transition = as::resolvePath(&player->root(), "_root.Transition");
-        player->blackBeyondStage = transition && transition->visible;
+        player->blackBeyondStage = transition && transition->visible && as::resolvePath(&player->root(), "_root.Course");
         // The window in stage pixels.
         double wx0 = -viewX / viewScale, wy0 = -viewY / viewScale;
         double ww = surf.width / viewScale, wh = surf.height / viewScale;
@@ -836,10 +837,14 @@ int main(int argc, char** argv) {
                             adjust(c, flash::Matrix::translate(wx0 * 20, wy0 * 20) * flash::Matrix::scale(ww / W, wh / H));
                             return;
                         }
-                        flash::Rect b = c.worldMatrix().apply(c.localBounds());
-                        double cx = (b.xMin + b.xMax) / 40;
-                        if (b.empty() || b.yMax / 20 > 40 || std::fabs(cx - W / 2) < 60) return;
-                        adjust(c, flash::Matrix::translate(cx < W / 2 ? wx0 * 20 : (wx0 + ww - W) * 20, 0));
+                        // Where it sits in the menu at rest (the menu, placed at the stage's
+                        // center, slides in; its content doesn't move within it), so it's in
+                        // place from the start.
+                        flash::Rect b = c.matrix.apply(c.localBounds());
+                        double cx = (b.xMin + b.xMax) / 40 + W / 2.0, bottom = b.yMax / 20 + H / 2.0;
+                        if (b.empty() || bottom > 40 || std::fabs(cx - W / 2.0) < 60) return;
+                        c.displayTransform = flash::Matrix::translate(cx < W / 2 ? wx0 * 20 : (wx0 + ww - W) * 20, 0);
+                        adjusted.push_back(c.weak_from_this());
                     });
                 });
             });

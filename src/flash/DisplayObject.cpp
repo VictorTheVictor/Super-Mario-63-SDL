@@ -329,11 +329,18 @@ void findBandCovers(DisplayObject& root, const Matrix& rootMatrix, const std::ve
 
 void setOcclusionCutoff(int order) { occlusionCutoff = order; }
 
-void renderDisplayObject(DisplayObject& o, Rasterizer& r, Surface& dst, const IntRect& clip,
+void renderDisplayObject(DisplayObject& o, Rasterizer& r, Surface& dst, const IntRect& fullClip,
                          const Matrix& parentMatrix, const ColorTransform& parentCx,
                          const Movie& movie, bool ignoreVisible) {
     if (occluded(o)) return;
     if ((!o.visible || renderSettings.isHidden(&o)) && !ignoreVisible) return;
+    IntRect clip = fullClip;
+    if (o.displayClip) {
+        Rect d = parentMatrix.apply(*o.displayClip);
+        clip = {std::max(clip.x0, (int)std::floor(std::max(d.xMin, -1e9))), std::max(clip.y0, (int)std::floor(std::max(d.yMin, -1e9))),
+                std::min(clip.x1, (int)std::ceil(std::min(d.xMax, 1e9))), std::min(clip.y1, (int)std::ceil(std::min(d.yMax, 1e9)))};
+        if (clip.empty()) return;
+    }
     Matrix m = parentMatrix * o.drawMatrix();
     ColorTransform cx = parentCx * o.cxform;
     bool needsLayer = !o.filters.empty() || o.blendMode >= BlendLayer;

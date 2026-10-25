@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -84,6 +85,9 @@ public:
     // object when drawing it and picking it with the mouse, without scripts seeing the
     // difference (e.g. HUD pinned to the window edge).
     Matrix displayTransform;
+    // Port presentation: when set, the object is drawn only inside this rectangle (parent
+    // space, twips), e.g. terrain cut short where the window-filling ground takes over.
+    std::optional<Rect> displayClip;
     // `matrix` with displayTransform: where the object is shown and picked by the mouse.
     Matrix displayMatrix() const { return displayTransform * matrix; }
     // The matrix to draw with: displayMatrix(), or between the previous tick's and the

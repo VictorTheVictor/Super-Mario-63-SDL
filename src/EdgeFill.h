@@ -4,15 +4,18 @@
 //
 // A course (`_root.Course`) is built from parts sharing one level-local origin, among them
 // BackGFX (background shapes and objects) and FrontGFX (the terrain), which the camera
-// scrolls. At each end, the terrain shapes (and background shapes reaching that end) are
-// mirrored, each about where its own drawing ends, and drawn below BackGFX so whatever the
-// level itself draws beyond an end stays in front. Only ground-like shapes are copied:
-// not objects (trees, coins, signs are clips) or small shapes (arrow signs, posts). The
-// copies follow their part's position and color transform (night and lighting tints).
-// Castle and other indoor courses get none.
+// scrolls. At each end, a 96 px slice of the terrain just inside the last tile (the
+// rounded end cap) is repeated outward endlessly; the level's own terrain is cut where the
+// repetition starts. Only terrain shapes repeat: not background art, objects (trees,
+// coins, signs are clips) or small shapes (arrow signs, posts). The copies sit below
+// BackGFX, so whatever the level itself draws beyond an end stays in front, and follow
+// their part's position and color transform. Castle and other indoor courses get none.
 
 #include <memory>
+#include <utility>
 #include <vector>
+
+#include "flash/Geom.h"
 
 namespace flash {
 class DisplayObject;
@@ -39,4 +42,6 @@ private:
         std::weak_ptr<flash::DisplayObject> holder, part;  // a fill and the course part it extends
     };
     std::vector<Holder> holders_;
+    // The course's terrain shapes and the rectangle (parent space) they're cut to.
+    std::vector<std::pair<std::weak_ptr<flash::DisplayObject>, flash::Rect>> clipped_;
 };

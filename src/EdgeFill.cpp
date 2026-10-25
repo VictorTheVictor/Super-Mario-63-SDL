@@ -20,6 +20,7 @@ namespace {
 struct Placed {
     const ShapeCharacter* shape;
     Matrix m;
+    DisplayObject* live = nullptr;  // the course's own shape object
     Rect bounds() const { return m.apply(shape->def.bounds); }
 };
 
@@ -29,7 +30,7 @@ std::vector<Placed> liveShapes(MovieClip& clip) {
     std::vector<Placed> out;
     clip.forEachChild([&](DisplayObject& c) {
         if (dynamic_cast<flash::ShapeObject*>(&c) && c.definition())
-            out.push_back({static_cast<const ShapeCharacter*>(c.definition()), c.matrix});
+            out.push_back({static_cast<const ShapeCharacter*>(c.definition()), c.matrix, &c});
     });
     return out;
 }
@@ -114,24 +115,32 @@ ShapeCharacter* maskShape() {
     return &mask;
 }
 
-// A clip in the course holding each shape mirrored about where it ends at that side (a
-// hair inside, so the copy overlaps the original instead of both half-covering the seam's
-// pixels), each masked to beyond its own end.
+// Ground textures repeat every 32 (grass, dirt) or 48 (sand) pixels: a slice 96 wide
+// tiles seamlessly. The last tile (32 pixels, with the rounded end cap) is left out of it.
+constexpr double kSlice = 96, kEndCap = 32;
+constexpr int kCopies = 40;  // ~3800 px: wider than any window shows past an end
+
+// A clip in the course repeating the ground slice next to an end outward: copy k (from 1)
+// shows the slice moved k slice widths, masked to exactly where it lands (overlapping its
+// neighbors by half a pixel). Copy 1 lands on the end cap itself, under it.
 std::shared_ptr<DisplayObject> makeHolder(MovieClip& course, int depth, const std::string& name, bool right,
-                                          const std::vector<Placed>& shapes) {
+                                          double end, const std::vector<Placed>& shapes) {
     auto holder = course.createEmpty(depth, name);
     auto* clip = dynamic_cast<MovieClip*>(holder.get());
     if (!clip) return nullptr;
+    double dir = right ? 1 : -1;
+    double sliceStart = end - dir * (kEndCap + kSlice);  // the slice's outer-from-the-end side
     int d = 1;
-    for (const Placed& p : shapes) {
-        auto [x0, x1] = drawnExtent(p);
-        double axis = right ? x1 - 0.5 : x0 + 0.5;
+    for (int k = 1; k <= kCopies; k++) {
+        double from = sliceStart + dir * k * kSlice;  // where this copy lands (inner side)
+        double x0 = std::min(from, from + dir * kSlice) - 0.5, x1 = std::max(from, from + dir * kSlice) + 0.5;
         auto mask = clip->attach(maskShape(), d, "");
-        mask->matrix = Matrix::translate(axis * 20, 0) * Matrix::scale(right ? 1 : -1, 1);
-        mask->clipDepth = d + 1;  // masks the copy right above it
-        auto obj = clip->attach(const_cast<ShapeCharacter*>(p.shape), d + 1, "");
-        if (obj) obj->matrix = Matrix{-1, 0, 0, 1, 2 * axis * 20, 0} * p.m;
-        d += 2;
+        mask->matrix = Matrix::translate(x0 * 20, 0) * Matrix::scale((x1 - x0) / 30000, 1);
+        mask->clipDepth = d + (int)shapes.size();  // masks this copy's shapes
+        for (const Placed& p : shapes)
+            if (auto obj = clip->attach(const_cast<ShapeCharacter*>(p.shape), ++d, ""))
+                obj->matrix = Matrix::translate(dir * k * kSlice * 20, 0) * p.m;
+        d++;
     }
     return holder;
 }
@@ -155,6 +164,7 @@ void EdgeFill::update(as::Player& player, bool visible) {
             pending_ = course->weak_from_this();
             pendingTicks_ = 0;
             holders_.clear();
+            clipped_.clear();
         }
         if (++pendingTicks_ >= 4) {
             as::Value root = as::valueOf(&player.root());
@@ -166,6 +176,12 @@ void EdgeFill::update(as::Player& player, bool visible) {
     }
     // Each fill moves with the part it extends (the camera scrolls the parts), including
     // where it was last tick for in-between frames, and takes its tint.
+    // The level's own terrain stops short of the ends the repeated ground takes over.
+    for (auto& [w, rect] : clipped_)
+        if (auto shape = w.lock()) {
+            if (visible) shape->displayClip = rect;
+            else shape->displayClip.reset();
+        }
     for (Holder& h : holders_) {
         auto holder = h.holder.lock();
         auto part = h.part.lock();
@@ -193,44 +209,32 @@ void EdgeFill::build(MovieClip& course) {
     if (terrainInBack) terrain = backShapes;
     if (terrain.empty()) return;  // not placed yet: try again next tick
     course_ = course.weak_from_this();
-    // Only ground-like shapes are mirrored (not arrow signs or other small markers).
-    auto groundOf = [](const std::vector<Placed>& shapes) {
-        std::vector<Placed> out;
-        for (const Placed& p : shapes)
-            if (groundLike(p)) out.push_back(p);
-        return out;
-    };
-    std::vector<Placed> frontGround = groundOf(terrain), backGround = terrainInBack ? std::vector<Placed>{} : groundOf(backShapes);
-    MovieClip* frontPart = terrainInBack || !front ? back : front;
+    // Only the ground repeats: ground-like terrain shapes (not arrow signs or other small
+    // markers; background shapes, objects and the like aren't terrain).
+    std::vector<Placed> ground;
+    for (const Placed& p : terrain)
+        if (groundLike(p)) ground.push_back(p);
+    if (ground.empty()) return;
+    auto [left, right] = xExtent(ground);
+    MovieClip* part = terrainInBack || !front ? back : front;
+    // The original terrain is cut a tile before each end (its rounded end cap), where the
+    // first repeated slice lies.
+    for (const Placed& p : ground)
+        if (p.live)
+            clipped_.push_back({p.live->weak_from_this(), Rect{(left + kEndCap) * 20, -1e9, (right - kEndCap) * 20, 1e9}});
     for (bool atRight : {true, false}) {
-        const char* side = atRight ? "right" : "left";
-        // Each shape is mirrored about where its own drawing ends (the grass can reach
-        // further than the ground under it). Background shapes count when they reach the
-        // background's end (walls and hills behind the terrain). Both layers' copies sit
-        // below BackGFX: whatever the level itself draws beyond an end stays in front.
-        struct Layer {
-            int depth;
-            const char* name;
-            std::vector<Placed> shapes;
-            MovieClip* part;
-        };
-        // Only shapes reaching the layer's end at this side (a bridge in the middle of the
-        // level isn't extended).
-        auto nearEnd = [&](const std::vector<Placed>& shapes, double reach) {
-            std::vector<Placed> out;
-            if (shapes.empty()) return out;
-            auto [l0, l1] = xExtent(shapes);
-            for (const Placed& p : shapes) {
-                auto [x0, x1] = drawnExtent(p);
-                if (atRight ? x1 >= l1 - reach : x0 <= l0 + reach) out.push_back(p);
-            }
-            return out;
-        };
-        for (const Layer& l : {Layer{16384 - 100 + atRight, "PortEdgeBack_", nearEnd(backGround, 60), back},
-                               Layer{16384 - 90 + atRight, "PortEdgeFront_", nearEnd(frontGround, 100), frontPart}}) {
-            if (l.shapes.empty() || !l.part) continue;
-            if (auto holder = makeHolder(course, l.depth, std::string(l.name) + side, atRight, l.shapes))
-                holders_.push_back({holder, l.part->weak_from_this()});
+        double end = atRight ? right : left;
+        // The shapes crossing the slice next to this end. Below BackGFX, so whatever the
+        // level itself draws beyond an end stays in front.
+        double s0 = atRight ? end - kEndCap - kSlice : end + kEndCap, s1 = s0 + kSlice;
+        std::vector<Placed> slice;
+        for (const Placed& p : ground) {
+            auto [x0, x1] = drawnExtent(p);
+            if (x1 > s0 && x0 < s1) slice.push_back(p);
         }
+        if (slice.empty() || !part) continue;
+        if (auto holder = makeHolder(course, 16384 - 100 + atRight, std::string("PortEdge_") + (atRight ? "right" : "left"),
+                                     atRight, end, slice))
+            holders_.push_back({holder, part->weak_from_this()});
     }
 }

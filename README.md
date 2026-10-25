@@ -102,7 +102,7 @@ the HUD's counters, hint line and quality box to the window's edges, stretch the
 dark overlay (the castle before enough stars) over the whole window, show door and
 course transitions letterboxed, fill menus with their own background color (the course
 select's white page), and continue the ground past a level's left and right ends by
-mirroring the terrain about each end (ground, platforms and clouds; not trees, signs or
+repeating a slice of the terrain next to each end (the ground only, not trees, signs or
 other objects; not in the castle or other indoor courses; see src/EdgeFill.h). The game's
 pause menu's white panel covers the window and its counters move to the edges too. F4 toggles crisp (nearest-neighbor) and smooth scaling of enlarged bitmaps, F7 toggles vsync (off: draw as fast as possible, to measure rendering), F8 toggles building
 nested filter layers once (on by default; off draws them per strip as before, slower, and can
