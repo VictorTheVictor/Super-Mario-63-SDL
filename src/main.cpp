@@ -823,6 +823,7 @@ int main(int argc, char** argv) {
     // Objects shown differently from where the game put them (displayTransform): HUD
     // pieces at the window's edges, the screen filter stretched over the whole window.
     std::vector<std::weak_ptr<flash::DisplayObject>> adjusted;
+    std::weak_ptr<flash::DisplayObject> debugLabel;  // the F3 label (see updateDebugLabel)
     auto applyView = [&]() {
         if (!player) return;
         player->hiddenObjects.clear();
@@ -902,6 +903,11 @@ int main(int argc, char** argv) {
                 if (narrowY) wy0 = top - dy, wh = bottom - top;
                 player->blackBeyond = flash::Rect{wx0 * 20, wy0 * 20, (wx0 + ww) * 20, (wy0 + wh) * 20};
             }
+        }
+        // The F3 label in the window's top left corner.
+        if (auto label = debugLabel.lock()) {
+            label->displayTransform = flash::Matrix::translate(wx0 * 20, wy0 * 20);
+            adjusted.push_back(label);
         }
         // Transitions in a level (clips on the main timeline): plain fades (to and from
         // white or black) stretch over the window; the wipes (the star, and the sliding ones
@@ -1116,6 +1122,46 @@ int main(int argc, char** argv) {
         }
     };
 
+    // F3 also shows, in the top left corner, the area Mario is in (_root.playingcourse)
+    // and his coordinates, in the game's own font: a copy of the HUD's hint field (same
+    // font and outline), placed above everything.
+    const int kDebugLabelDepth = as::kDepthOffset + 30000;
+    auto updateDebugLabel = [&]() {
+        MovieClip& root = player->root();
+        auto label = debugLabel.lock();
+        if (label && as::isRemoved(label.get())) label.reset();
+        if (!player->debugOverlay || !inLevel(*player)) {
+            if (label) root.removeChild(kDebugLabelDepth);
+            debugLabel.reset();
+            return;
+        }
+        if (!label) {
+            flash::TextField* hint = nullptr;
+            if (auto* stats = as::resolvePath(&root, "_root.Stats"))
+                stats->forEachChild([&](flash::DisplayObject& c) {
+                    if (auto* tf = dynamic_cast<flash::TextField*>(&c); tf && tf->variable == "_root.TextHint") hint = tf;
+                });
+            if (!hint) return;
+            label = root.attach(hint->definition(), kDebugLabelDepth, "PortDebugLabel");
+            auto* tf = dynamic_cast<flash::TextField*>(label.get());
+            if (!tf) return;
+            tf->variable.clear();  // not bound to the hint
+            tf->filters = hint->filters;
+            tf->bounds = {0, 0, 440 * 20.0, 30 * 20.0};
+            tf->matrix = flash::Matrix::translate(4 * 20.0, 2 * 20.0);
+            debugLabel = label;
+        }
+        auto* tf = dynamic_cast<flash::TextField*>(label.get());
+        as::Value rootV = as::valueOf(&root);
+        std::string area = as::getMember(rootV, as::intern("playingcourse")).toString();
+        char text[160];
+        if (auto* mario = as::resolvePath(&root, "_root.Course.Char"))
+            std::snprintf(text, sizeof text, "%s   x %.1f   y %.1f", area.c_str(), mario->matrix.tx / 20, mario->matrix.ty / 20);
+        else
+            std::snprintf(text, sizeof text, "%s", area.c_str());
+        if (tf && tf->text() != text) tf->setText(text);
+    };
+
     // The controller's menu cursor (see MenuCursor).
     MenuCursor menuCursor;
     std::map<int, int> keyPulses;  // keys pressed for the controller: ticks until released
@@ -1158,6 +1204,7 @@ int main(int argc, char** argv) {
             holdZoom();
         }
         menuCursor.afterTick(*player);
+        updateDebugLabel();
         for (auto it = keyPulses.begin(); it != keyPulses.end();)
             if (--it->second <= 0) player->keyUp(it->first), it = keyPulses.erase(it);
             else ++it;
@@ -2039,6 +2086,7 @@ int main(int argc, char** argv) {
                         }
                         if (e.key.keysym.sym == SDLK_F3 && !e.key.repeat) {
                             player->debugOverlay = !player->debugOverlay;
+                            updateDebugLabel();
                             redraw = true;
                             break;
                         }

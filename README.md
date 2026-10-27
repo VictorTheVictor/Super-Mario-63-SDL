@@ -141,7 +141,7 @@ cursor until it is cancelled. When the selected button goes away, the nearest on
 selected; after B, the cursor returns to the button that opened the menu just left. Links (the Newgrounds banner, the Runouw credit and intro, a level's "view on
 site") open only from a real mouse click, never from the controller or a touch.
 Debugging: F2 toggles noclip (arrow keys fly Mario through walls, Shift for speed, easing to a stop; he is invulnerable meanwhile), F3
-shows every object's outline over the frame (shape edges in cyan; boxes for clips in
+shows the area Mario is in and his coordinates in the top left corner, and (software renderer) every object's outline over the frame (shape edges in cyan; boxes for clips in
 green, text in yellow, buttons in magenta, masks in orange; invisible objects such as the
 collision clips in red), F9 writes `sm63-dump-N.txt` (display tree) and `sm63-dump-N.bmp`.
 The window title shows the rendered frames per second.
